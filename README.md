@@ -4,7 +4,8 @@
 install.packages('parallel',repos='http://cran.ma.imperial.ac.uk')
 
 #Save BayesLogit_quiet.tar.gz and prrems.R to directory of choice and install from R
-install.packages('path/BayesLogit_quiet.tar.gz', repos = NULL, type="source")
+install.packages('path/BayesLogit_quiet.tar.gz', repos = NULL, type="source")  
+#BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output.
 
 #Install PRReMS
 source('path/prrems.R')  
