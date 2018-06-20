@@ -13,13 +13,20 @@ source('path/prrems.R')
 #Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
 # Read and format data
-test <- read.csv('SPECTF.test')\n
+test <- read.csv('SPECTF.test')
+
 train <- read.csv('SPECTF.train')
+
 x.test <- as.matrix(test[,-1])
+
 x.train <- as.matrix(train[,-1])
+
 y.test <- test[,1]
+
 y.train <- train[,1]
+
 colnames(x.train) <- paste("X",1:44,sep='')
+
 colnames(x.test) <- paste("X",1:44,sep='')
 
 # Estimate the Guassian precison paramter -- the penalty
