@@ -13,7 +13,7 @@ source('path/prrems.R')
 #Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
 # Read and format data
-test <- read.csv('SPECTF.test')
+test <- read.csv('SPECTF.test')\n
 train <- read.csv('SPECTF.train')
 x.test <- as.matrix(test[,-1])
 x.train <- as.matrix(train[,-1])
