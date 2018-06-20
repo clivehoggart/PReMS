@@ -8,25 +8,19 @@ install.packages('path/BayesLogit_quiet.tar.gz', repos = NULL, type="source")
 
 #Install PRReMS
 source('path/prrems.R')
+#Where appropriate arguemnets to PRReMS function are labelled identically to those of glmnet
 
 # Example analysis of the SPECTF Heart Data Set
 #Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
 # Read and format data
 test <- read.csv('SPECTF.test')
-
 train <- read.csv('SPECTF.train')
-
 x.test <- as.matrix(test[,-1])
-
 x.train <- as.matrix(train[,-1])
-
 y.test <- test[,1]
-
 y.train <- train[,1]
-
 colnames(x.train) <- paste("X",1:44,sep='')
-
 colnames(x.test) <- paste("X",1:44,sep='')
 
 # Estimate the Guassian precison paramter -- the penalty
