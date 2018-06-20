@@ -15,6 +15,7 @@ source('path/prrems.R')
 
 # Read and format data
 test <- read.csv('SPECTF.test')
+
 train <- read.csv('SPECTF.train')
 x.test <- as.matrix(test[,-1])
 x.train <- as.matrix(train[,-1])
@@ -43,5 +44,5 @@ t(sapply(r.test,getElement,'ci'))
 cv.prrems.fit <- cv.prrems( y=y.train, x=x.train, k.min=1, k.max=k.max, no.cores=no.cores, nfolds=20, max.s=100 )
 
 # Predict in test set using model size determined by cross-validation
-pred.test <- predict.prrems( prrems.fit, x.test, size=cv.prrems.fit$best, no.cores=no.cores )
+pred.test <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores )
 roc( y.test, pred.test[,1], ci=TRUE )
