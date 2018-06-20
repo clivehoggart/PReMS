@@ -1,4 +1,5 @@
 # PRReMS
+# Installation
 #Required packages parallel, glmnet and pROC can be installed in R from CRAN mirror, eg
 #install.packages('parallel',repos='http://cran.ma.imperial.ac.uk')
 
@@ -11,6 +12,7 @@ source('path/prrems.R')
 #Example analysis of the SPECTF Heart Data Set
 #Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
+# Analysis of SPECTF data
 # Read and format data
 test <- read.csv('SPECTF.test')
 train <- read.csv('SPECTF.train')
