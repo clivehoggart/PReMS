@@ -329,7 +329,7 @@ fill.ICs <- function( fitted.models, y, x, n.waic, no.cores=10, n.rank=10, model
     return( fitted.models )
 }
 
-getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='waic', fit='mode' ){
+getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='waic' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     model.sizes <- size
     if( is.null(model.sizes) ){
@@ -413,21 +413,6 @@ predict.prrems.bayes <- function( fitted.models, newx, y.train, x.train, size=NU
     eta.hat <- X %*% beta.bar
     pred.hat <- 1/(1 + exp(-eta.hat))
 
-    for( ii in 1:size ){
-        i <- ii + 1
-        beta.bar[i] <- beta.bar[i]/fitted.models$sd[ii]
-        beta.bar[1] <- beta.bar[1] - fitted.models$m[ii]*beta.bar[i]
-    }
-
-#    return(pred.full)
-#    for( i in 1:size ){
-#        ii <- ptr.test[i]
-#        beta.bar[(i+1)] <- beta.bar[(i+1)] / fitted.models$sd[ii]
-#        beta.bar[1] <- beta.bar[1] - fitted.models$m[ii]*beta.bar[(i+1)]
-#    }
-#    X <- cbind( 1, newx.U[,ptr.test] )
-#    eta.hat <- X %*% beta.bar
-#    pred.hat2 <- 1/(1 + exp(-eta.hat))
     return( cbind( pred.full, pred.hat) )
 }
 
@@ -473,7 +458,7 @@ prrems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=10000, n.coef=1, lasso.penalty="lambda.min" ){
+cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=10000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -489,7 +474,9 @@ cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all
     pred <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
     pwll <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
     cv.ll <- matrix(ncol=(k.max-k.min+1),nrow=nfolds)
-    print(paste(nfolds,'fold cross-validation'))
+    if( verbose ){
+        print(paste(nfolds,'fold cross-validation'))
+    }
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
@@ -498,9 +485,11 @@ cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all
         my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
-            pred[test,kk] <- predict.prrems( my.fit, X=x[test,,drop=FALSE], size=k, fit='mean' )
+            pred[test,kk] <- predict.prrems( my.fit, newx=x[test,,drop=FALSE], size=k, fit='mean' )
         }
-        print(paste('Fold',i,'complete.'))
+        if( verbose ){
+            print(paste('Fold',i,'complete.'))
+        }
     }
     for( k in k.min:k.max ){
         kk <- k - k.min + 1
@@ -520,25 +509,28 @@ cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all
     names(cvsd) <- k.min:k.max
     colnames(pred) <- k.min:k.max
 
-    print(cvm)
-    print(cvsd)
-    ptr <- order(cvm,decreasing=TRUE)[1]
-    best <- (k.min:k.max)[ptr]
-    ptr2 <- which((cvm+cvsd[ptr])[1:(ptr-1)]>cvm[ptr])
-    print(c(ptr,ptr2))
-    print(best)
-    if( length(ptr2)>0 ){
-        one.se <- (k.min:k.max)[min(ptr2)]
-    }
-    if( length(ptr2)==0 ){
-        one.se <- best
-    }
-    print(one.se)
-#    ret <- list( pred, ll, pwll, one.se, best )
-#    names(ret) <- c('Predictions','loglike','pointwise_loglike','one.se','best')
-    ret <- list( one.se, best, cvm, cvsd )
-    names(ret) <- c('one.se','best','cvm','cvsd')
+    sizes <- (k.min:k.max)[new.optim( cvm, cvsd )]
+
+    ret <- list( sizes[1], sizes[2], cvm, cvsd )
+    names(ret) <- c('best','one.se','cvm','cvsd')
     return( ret )
+}
+
+new.optim <- function( cvm, cvsd ){
+    k <- 1:length(cvm)
+    one.se <- vector()
+    best <- order( cvm-cvsd, decreasing=TRUE )[1]
+    for( i in 1:best ){
+        ptr2 <- which((cvm+cvsd[i])[1:(i-1)]>cvm[i])
+        if( length(ptr2)>0 ){
+            one.se[i] <- k[min(ptr2)]
+        }
+        if( length(ptr2)==0 ){
+            one.se[i] <- i
+        }
+    }
+    best <- max(which(one.se==max(one.se)))
+    return(c(best,one.se[best]))
 }
 
 TauEst <- function( y, x, family='binomial', standardize=TRUE, n.coef=1, lasso.penalty="lambda.min", fit=NULL, nfolds=NULL ){
@@ -583,4 +575,15 @@ my.auc <- function( my.fit, sizes, X, y, rank=1 ){
     }
     names(r) <- sizes
     return(r)
+}
+
+make.folds2 <- function( strata, folds ){
+    which.fold <- rep(NA,length=sum(!is.na(strata)))
+    strata <- as.factor(strata)
+    for( ll in levels(strata) ){
+        ptr.ll <- which( strata==ll )
+        fold <- c( rep( 1:folds, times=floor(length(ptr.ll)/folds) ), sample( 1:folds, length(ptr.ll)%%folds) )
+        which.fold[sample( ptr.ll, replace=FALSE )] <- fold
+    }
+    return(which.fold)
 }
