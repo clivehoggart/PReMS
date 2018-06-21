@@ -9,7 +9,7 @@ install.packages('path/BayesLogit_quiet.tar.gz', repos = NULL, type="source")
 
 #Install PRReMS
 source('path/prrems.R')  
-#Where appropriate arguemnets to PRReMS function are labelled identically to those of glmnet
+#Where appropriate arguemnets to PRReMS functions are labelled identically to those of glmnet
 
 # Example analysis of the SPECTF Heart Data Set
 #Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
