@@ -49,8 +49,9 @@ pred.mean <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, n
 #Predict from posterior mode  
 pred.mode <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mode' )
 #Predict from full posterior
-pred.bayes <- predict.prrems.bayes( fit, newx=x.test, size=cv.prrems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )
+pred.bayes <- predict.prrems.bayes( prrems.fit, newx=x.test, size=cv.prrems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )
 #AUC of predictions from posterior mean
 roc( y.test, pred.mean[,1], ci=TRUE )
 #Model description
-getModelFit( fit, size=cv.prrems.fit$best )
+getModelFit( prrems.fit, size=cv.prrems.fit$best )
+
