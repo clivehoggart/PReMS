@@ -47,11 +47,11 @@ cv.prrems.fit <- cv.prrems( y=y.train, x=x.train, k.min=1, k.max=k.max, no.cores
 #Predict from posterior mean  
 pred.mean <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mean' )  
 #Predict from posterior mode  
-pred.mode <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mode' )
-#Predict from full posterior
-pred.bayes <- predict.prrems.bayes( prrems.fit, newx=x.test, size=cv.prrems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )
-#AUC of predictions from posterior mean
-roc( y.test, pred.mean[,1], ci=TRUE )
-#Model description
-getModelFit( prrems.fit, size=cv.prrems.fit$best )
+pred.mode <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mode' )  
+#Predict from full posterior  
+pred.bayes <- predict.prrems.bayes( prrems.fit, newx=x.test, size=cv.prrems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )  
+#AUC of predictions from posterior mean  
+roc( y.test, pred.mean[,1], ci=TRUE )  
+#Model description  
+getModelFit( prrems.fit, size=cv.prrems.fit$best )  
 
