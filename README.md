@@ -43,6 +43,14 @@ t(sapply(r.test,getElement,'ci'))
 # Croos-validation to determine optimal model size
 cv.prrems.fit <- cv.prrems( y=y.train, x=x.train, k.min=1, k.max=k.max, no.cores=no.cores, nfolds=20, max.s=100 )
 
-# Predict in test set using model size determined by cross-validation
-pred.test <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores )  
-roc( y.test, pred.test[,1], ci=TRUE )
+# Applying model of size determined by cross-validation
+#Predict from posterior mean  
+pred.mean <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mean' )  
+#Predict from posterior mode  
+pred.mode <- predict.prrems( prrems.fit, newx=x.test, size=cv.prrems.fit$best, no.cores=no.cores, fit='mode' )
+#Predict from full posterior
+pred.bayes <- predict.prrems.bayes( fit, newx=x.test, size=cv.prrems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )
+#AUC of predictions from posterior mean
+roc( y.test, pred.mean[,1], ci=TRUE )
+#Model description
+getModelFit( fit, size=cv.prrems.fit$best )
