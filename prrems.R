@@ -2,6 +2,18 @@ library(parallel)
 library(glmnet)
 library(pROC)
 library(BayesLogit)
+library(gplots)
+
+plot.cv.prrems <- function( cv.fit, ylim=NULL, cex=1 ){
+    if( is.null(ylim) ){
+        ylim <- range(c( (cv.fit$cvm-cv.fit$cvsd), (cv.fit$cvm+cv.fit$cvsd) ))
+    }
+    k <- as.numeric(names(cv.fit$cvm))
+    plotCI( k, cv.fit$cvm, col='red', xlab='Model size', ylab='', uiw=cv.fit$cvsd, barcol='dimgrey', ylim=ylim,pch=19, cex.lab=cex, cex.axis=cex )
+    mtext('Predictive log-likelihood',side=2,line=3,cex=cex)
+    abline(v=(k)[cv.fit$one.se], lty=2)
+    abline(v=(k)[cv.fit$best], lty=2)
+}
 
 getCoefGlmnet <- function( fit, s="lambda.min" ){
     tmp2 <- coef( fit, s=s )
@@ -509,11 +521,24 @@ cv.prrems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all
     names(cvsd) <- k.min:k.max
     colnames(pred) <- k.min:k.max
 
-    sizes <- (k.min:k.max)[new.optim( cvm, cvsd )]
+    sizes <- (k.min:k.max)[prrems.optim( cvm, cvsd )]
 
     ret <- list( sizes[1], sizes[2], cvm, cvsd )
     names(ret) <- c('best','one.se','cvm','cvsd')
     return( ret )
+}
+
+prrems.optim <- function( cvm, cvsd ){
+    k <- 1:length(cvm)
+    best <- order(cvm,decreasing=TRUE)[1]
+    ptr2 <- which((cvm+cvsd[best])[1:(best-1)]>cvm[best])
+    if( length(ptr2)>0 ){
+        one.se <- min(ptr2)
+    }
+    if( length(ptr2)==0 ){
+        one.se <- best
+    }
+    return(c(best,one.se))
 }
 
 new.optim <- function( cvm, cvsd ){
