@@ -54,4 +54,4 @@ pred.bayes <- predict.prrems.bayes( prrems.fit, newx=x.test, size=cv.prrems.fit$
 roc( y.test, pred.mean[,1], ci=TRUE )  
 #Model description  
 getModelFit( prrems.fit, size=cv.prrems.fit$best )  
-
+#Plot of cross-validation predictive log-likelihoods  
