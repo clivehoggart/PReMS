@@ -25,7 +25,7 @@ colnames(x.train) <- paste("X",1:44,sep='')
 colnames(x.test) <- paste("X",1:44,sep='')  
 
 # Estimate the Guassian precison paramter -- the penalty
-tau <-  TauEst(  y=y.train, x=x.train, nfolds=50, lasso.penalty="lambda.min" )
+tau <-  TauEst(  y=y.train, x=x.train, nfolds=50 )
 
 # Set PReMS parameters
 no.cores <- 12 # Set according to the number of available processors  
@@ -33,7 +33,7 @@ k.max <- 10 # Maximum model size to explore
 max.s <- 100 # Number of models to take forward at each increase in model size  
 
 # PReMS analysis
-prems.fit <- prems( y=y.train, x=x.train, family='binomial', tau=tau$tau, k.max=k.max, max.s=max.s, standardize=TRUE, no.cores=no.cores )  
+prems.fit <- prems( y=y.train, x=x.train, family='binomial', tau=tau$tau.opt, k.max=k.max, max.s=max.s, standardize=TRUE, no.cores=no.cores )  
 prems.fit <- fill.ICs( fitted.models=prems.fit, y=y.train, x=x.train, n.waic=10000, model.sizes=1:k.max, no.cores=no.cores )
 
 # Evaluate AUC for best model of each size
