@@ -55,3 +55,4 @@ roc( y.test, pred.mean[,1], ci=TRUE )
 #Model description  
 getModelFit( prems.fit, size=cv.prems.fit$best )  
 #Plot of cross-validation predictive log-likelihoods  
+plot.cv.prems(prems.fit)
