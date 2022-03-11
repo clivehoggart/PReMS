@@ -13,17 +13,13 @@ install.packages('parallel',repos='http://cran.ma.imperial.ac.uk')
 	install.packages('PReMS/BayesLogitquiet_0.6.tar.gz', repos = NULL, type="source")  
 BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output. \
 
-Downlaod example data:
-
+# Downlaod example SPECTF Heart Data Set data:
 	wget  https://archive.ics.uci.edu/ml/machine-learning-databases/spect/SPECTF.train
 	wget  https://archive.ics.uci.edu/ml/machine-learning-databases/spect/SPECTF.test
 
-#Install PReMS
-	source('PReMS/prems.R')  \
+# Install PReMS
+	source('PReMS/prems.R')
 Where appropriate arguemnets to PReMS functions are labelled identically to those of glmnet
-
-# Example analysis of the SPECTF Heart Data Set
-Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
 # Read and format data
 	test <- read.csv('SPECTF.test')  
