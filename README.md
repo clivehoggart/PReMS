@@ -1,18 +1,18 @@
 # PReMS
 # Installation
-#Required packages parallel, glmnet and pROC can be installed in R from CRAN mirror, eg
+Required packages parallel, glmnet and pROC can be installed in R from CRAN mirror, eg \
 install.packages('parallel',repos='http://cran.ma.imperial.ac.uk')
 
-#Save BayesLogit_quiet.tar.gz and prems.R to directory of choice and install from R
+Save BayesLogit_quiet.tar.gz and prems.R to directory of choice and install from R
 install.packages('path/BayesLogitquiet_0.6.tar.gz', repos = NULL, type="source")  
-#BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output.
+BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output. \
 
 #Install PReMS
-source('path/prems.R')  
-#Where appropriate arguemnets to PReMS functions are labelled identically to those of glmnet
+source('path/prems.R')  \
+Where appropriate arguemnets to PReMS functions are labelled identically to those of glmnet
 
 # Example analysis of the SPECTF Heart Data Set
-#Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
+Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machine-learning-databases/spect/
 
 # Read and format data
 test <- read.csv('SPECTF.test')  
