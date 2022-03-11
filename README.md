@@ -11,7 +11,7 @@ Required packages parallel, glmnet and pROC can be installed in R from CRAN mirr
 install.packages('parallel',repos='http://cran.ma.imperial.ac.uk')
 
 	install.packages('PReMS/BayesLogitquiet_0.6.tar.gz', repos = NULL, type="source")  
-BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output. \
+BayesLogit is no longer supoorted by CRAN and the version on github produces large output to screen, version here silences screen output
 
 # Downlaod example SPECTF Heart Data Set data:
 	wget  https://archive.ics.uci.edu/ml/machine-learning-databases/spect/SPECTF.train
