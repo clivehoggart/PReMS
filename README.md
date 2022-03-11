@@ -55,15 +55,15 @@ Download SPECTF.train and SPECTF.test from https://archive.ics.uci.edu/ml/machin
 	cv.prems.fit <- cv.prems( y=y.train, x=x.train, k.min=1, k.max=k.max, no.cores=no.cores, nfolds=20, max.s=100 )
 
 # Applying model of size determined by cross-validation
-#Predict from posterior mean  
+	#Predict from posterior mean  
 	pred.mean <- predict.prems( prems.fit, newx=x.test, size=cv.prems.fit$best, no.cores=no.cores, fit='mean' )  
-#Predict from posterior mode  
+	#Predict from posterior mode  
 	pred.mode <- predict.prems( prems.fit, newx=x.test, size=cv.prems.fit$best, no.cores=no.cores, fit='mode' )  
-#Predict from full posterior  
+	#Predict from full posterior  
 	pred.bayes <- predict.prems.bayes( prems.fit, newx=x.test, size=cv.prems.fit$best, x.train=x.train, y.train=y.train, no.cores=no.cores, iter=50000 )  
 	#AUC of predictions from posterior mean  
 	roc( y.test, pred.mean[,1], ci=TRUE )  
-#Model description  
+	#Model description  
 	getModelFit( prems.fit, size=cv.prems.fit$best )  
-#Plot of cross-validation predictive log-likelihoods  
+	#Plot of cross-validation predictive log-likelihoods  
 	plot.cv.prems(cv.prems.fit)
