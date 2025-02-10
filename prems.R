@@ -4,6 +4,28 @@ library(pROC)
 library(BayesLogit)
 library(gplots)
 
+my.rpg <- function(z){
+    omega <- rpg( num=1, h=1, z )
+    return(omega)
+}
+
+Bayes_logit <- function( y=y, X, m0, P0, samp, burn ){
+    beta.samp <- matrix( ncol=length(m0), nrow=(samp) )
+    beta <- rep(0,length(m0))
+    kappa <- y-0.5
+    omega <- vector(length=length(y))
+    for( k in 1:(samp+burn) ){
+        eta <- X %*% beta
+        omega <- sapply( as.vector(eta), my.rpg )
+        V.omega <- solve(t(X) %*% diag(omega) %*% X + P0)
+        m.omega <- V.omega %*% (t(X) %*% kappa + P0 %*% m0)
+        beta <- mvrnorm( n=1, mu=m.omega, Sigma=V.omega )
+        if( k>burn ){
+            beta.samp[(k-burn),] <- beta
+        }
+    }
+}
+
 plot.cv.prems <- function( cv.fit, ylim=NULL, cex=1 ){
     if( is.null(ylim) ){
         ylim <- range(c( (cv.fit$cvm-cv.fit$cvsd), (cv.fit$cvm+cv.fit$cvsd) ))
@@ -39,7 +61,7 @@ null.sim <- function( fitted.models, X, y, from=from, samples, no.cores=10 ){
         ptr <- match( selected.covs, colnames(X) )
         x.null <- X[sample(1:nrow(X)),]
         x.null[,ptr] <- X[,ptr]
-        
+
         tmp <- ModelSearchIncrease( fitted.models=fitted.models,  X=x.null, y=y, no.cores=no.cores, from=from )
         tmp <- fill.ICs( fitted.models=tmp, y=y, X=x.null, n.waic=5000, model.sizes=from+1, no.cores=no.cores )
         tmp2 <- getICs(tmp)
@@ -60,7 +82,7 @@ stepUP <- function( old.modelS, P, old.ml, max.s=10 ){
     new.modelS <- rbind( new.modelS, expand.model( old.modelS[s[k],], P ) )
   }
   new.modelS <- unique(new.modelS)
-  return(new.modelS) 
+  return(new.modelS)
 }
 
 getLogPost <- function( y, x, beta, tau ){
@@ -122,35 +144,35 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
     p.anna <- NA
     dic <- NA
     beta.bar <- NA
-  
+
   if( is.null(beta.tilde0) ){
     beta.tilde0 <- rep(0,k)
   }
-  
+
   if( family=='gaussian' ){
       norm.const <- sd(y)
       y <- y/norm.const
       y.y <- sum(y*y)
-      
+
       M1 <- diag(tau,nrow=ncol(x1)) + t(x1) %*% x1
       Inv.M1 <- solve(M1)
       q1 <- y.y - (t(y) %*% x1 %*% Inv.M1 %*% t(x1) %*% y)
-      
+
       l.gamma1 <- lgamma( 0.5*(n+delta+k1) ) - (n-k1)*log(tau)/2 - (n+delta+k1)*log(1+q1/tau)/2 - lgamma(0.5*(delta+k1)) - 0.5*log(det(M1))
       beta.tilde <- (Inv.M1 %*% t(x1) %*% y) * norm.const
       aic <- 2* (sum(y - x1 %*% beta.tilde)^2 + length(beta.tilde) - 1)
       if(n.waic!=0){
-          S <- t(y - x1 %*% beta.tilde) %*% y 
-          post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" ) 
+          S <- t(y - x1 %*% beta.tilde) %*% y
+          post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" )
       }
   }
-  
+
     if( family=='binomial' ){
         tau1 <- c( rep(1e-12,k2), rep(tau,k1) )
         yy <- 2*y-1
         tmp <- optim( beta.tilde0, fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
         beta.tilde <- tmp$par
- 
+
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
         logPost <- -tmp$value
 #        hess <- getHessian2( x1, beta.tilde, tau1 )
@@ -158,11 +180,11 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
         # Recording log-posterior #
         ###########################
         l.gamma1 <- logPost# - 0.5*log(det(hess))
-    
+
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
         if(n.waic!=0){
-            post.samples <- BayesLogit::logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=500 )
+            post.samples <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=500 )
             beta.post <- post.samples$beta
             ll <- matrix( ncol=n, nrow=n.waic )
             for( i in 1:n.waic ){
@@ -173,7 +195,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
             p.waic <- sum(apply( log(ll), 2, var ))
 #            p.waic2 <- 2 * sum( log(apply( ll, 2, mean )) - apply( log(ll), 2,  mean ) )
             w.aic <- -lppd + p.waic
-            
+
             beta.bar <- apply( beta.post, 2, mean )
         }
     }
@@ -198,10 +220,10 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
 ############# Public functions below #############
 
 prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family='gaussian', tau=1, delta=1, max.s=10, no.cores=10, standardize=TRUE, verbose=TRUE ){
- 
+
     model.indicator <- list()
     fitted.models <- list()
-  
+
     m1 <- apply( x, 2, mean )
     s1 <- apply( x, 2, sd )
     ptr.covs.use <- which( s1!=0 )
@@ -216,9 +238,9 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
     x <- t(t(x)/s1)
 
     Ncov <- length(ptr.covs.use)
-    
+
     null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta, m1=vector(length=0), sd1=vector(length=0), n.waic=1000 )
-  
+
     model.indicator[[1]] <- cbind(1:Ncov)
     if( verbose ){
         print( paste('Searching',Ncov,'1D models (all possible)') )
@@ -228,7 +250,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
     if( verbose ){
         print("Finished 1D models")
     }
-    
+
     if( max2way=='all' ){
         model.indicator[[2]] <- getAll2Way(Ncov)
         if( verbose ){
@@ -252,7 +274,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
         print("Finished 2D models")
     }
     ML <- unlist(mclapply( fitted.models[[2]], getElement, 'aic', mc.cores=no.cores ))
-    
+
     s <- order( ML, decreasing=FALSE )
     tmp.fits <- list()
     tmp.indicator <- matrix( ncol=k, nrow=max.s )
@@ -296,7 +318,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
             model.indicator[[k]] <- tmp.indicator
         }
     }
-  
+
     ret <- list( null, fitted.models, model.indicator, colnames(x), m1, s1, tau, standardize, family )
     names(ret) <- c('null','fitted.models','model.indicator', 'cnames', 'm', 'sd', 'tau', 'standardize', 'family' )
 
@@ -313,7 +335,7 @@ ModelSearchIncrease <- function( fitted.models, X, y, no.cores=10, max.s=max.s )
     ML <- unlist(mclapply( fitted.models$fitted.models[[k]], getElement, 'aic', mc.cores=no.cores ))
 
     fitted.models$model.indicator[[k+1]] <- stepUP( fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s )
-   
+
     fitted.models$fitted.models[[k+1]] <- mclapply(1:nrow(fitted.models$model.indicator[[k+1]]) , function(i)
     {getMargLikelihood2( x.select=X[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]], y=y,
                         family=fitted.models$family, tau=fitted.models$tau, delta=fitted.models$delta,
@@ -354,7 +376,7 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
         }
         size <- order(min.ic)[1]
     }
-    
+
     ptr <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
 
     model.fit <- list()
@@ -403,7 +425,7 @@ predict.prems.bayes <- function( fitted.models, newx, y.train, x.train, size=NUL
     ptr1 <- fitted.models$model.indicator[[size]][best.fit,]
     ptr <- match( fitted.models$cnames[ptr.covs.use[ptr1]], colnames(x.train) )
 
-    
+
     tau1 <- c( 1e-12, rep(fitted.models$tau,size) )
     iter.cores <- ceiling(iter/no.cores)
     post.samples <- mclapply(1:no.cores, function(i) {parallel.BayesLogit( y=y.train, X=cbind(1,x.train[,ptr]), m0=rep(0,size+1), P0=diag(tau1), samp=iter.cores, burn=500, dummy=i )}, mc.cores=no.cores )
@@ -429,7 +451,7 @@ predict.prems.bayes <- function( fitted.models, newx, y.train, x.train, size=NUL
 }
 
 parallel.BayesLogit <- function( y, X, m0, P0, samp, burn, dummy ){
-    post.samples <- BayesLogit::logit( y=y, X=X, m0=m0, P0=P0, samp=samp, burn=burn )
+    post.samples <- Bayes_logit( y=y, X=X, m0=m0, P0=P0, samp=samp, burn=burn )
     return(post.samples)
 }
 
@@ -514,7 +536,7 @@ cv.prems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all'
         for( i in 1:nfolds ){
             test <- which( foldid==i )
             cv.ll[i,kk] <- mean(pwll[test,kk])
-        }       
+        }
     }
     cvm <- apply( pwll, 2, mean )
     cvsd <- apply( cv.ll, 2, sd )/sqrt(nfolds)
@@ -578,6 +600,7 @@ TauEst <- function( y, x, family='binomial', standardize=TRUE, n.coef=1, fit=NUL
     n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
     ptr <- 1:n.coef
     tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
+    tau.opt <- lambda / max(abs(beta1))
 
     beta <- getCoefGlmnet( fit, s='lambda.1se' )
     s <- rep(1,length(beta))
@@ -590,6 +613,7 @@ TauEst <- function( y, x, family='binomial', standardize=TRUE, n.coef=1, fit=NUL
     n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
     ptr <- 1:n.coef
     tau.1se <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
+    tau.1se <- lambda / max(abs(beta1))
 
     ret <- list( tau.opt, tau.1se, fit )
     names(ret) <- c('tau.opt', 'tau.1se', 'fit.lasso')
