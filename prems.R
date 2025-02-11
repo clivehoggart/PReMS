@@ -136,9 +136,9 @@ expand.model <- function( old.model, P ){
 getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0 ){
     n <- length(y)
     x1 <- cbind( rep(1,n), x.fixed, x.select )
-    k <- ncol(x1)
-    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) )
-    k2 <- k - k1
+    k <- ncol(x1) # total covs + intercept
+    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
+    k2 <- k - k1 # no. fixed covs + intercept
     w.aic <- NA
     lppd <- NA
     p.waic <- NA
@@ -201,7 +201,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
             beta.bar <- apply( beta.post, 2, mean )
         }
     }
-    if( ncol(x1)>1 ){
+    if( k1>0 ){
         for( ii in 1:k1 ){
             i <- ii + k2
             beta.tilde[i] <- beta.tilde[i]/sd1[ii]
@@ -268,7 +268,8 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
     }
     k <- 2
     fitted.models[[k]] <- mclapply( 1:nrow(model.indicator[[k]]), function(i)
-    {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]], x.fixed=x.fixed, y=y,
+    {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]],
+                        x.fixed=x.fixed, y=y,
                         family=family, tau=tau, delta=delta,
                         m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
                         sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]] )}, mc.cores=no.cores)
@@ -296,11 +297,13 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
             if( verbose ){
                 print( paste('Searching ',nrow(model.indicator[[k]]),' ',k,'D models',sep='') )
             }
-            fitted.models[[k]] <- mclapply(1:nrow(model.indicator[[k]]) , function(i)
-            {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]], x.fixed=x.fixed, y=y,
+            fitted.models[[k]] <- mclapply(1:nrow(model.indicator[[k]]), function(i)
+            {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]],
+                                x.fixed=x.fixed, y=y,
                                 family=family, tau=tau, delta=delta,
                                 m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
-                                sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]] )}, mc.cores=no.cores)
+                                sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]] )},
+            mc.cores=no.cores)
             if( verbose ){
                 print( paste('Finished ',k,'D models',sep='') )
             }
