@@ -15,11 +15,16 @@ Bayes_logit <- function( y=y, X, m0, P0, samp, burn ){
     beta <- rep(0,length(m0))
     kappa <- y-0.5
     omega <- vector(length=length(y))
+    tX <- t(X)
+    P0.m0 <- P0 %*% m0
+    tX.kappa <- tX %*% kappa
+    m1 <- tX.kappa + P0.m0
     for( k in 1:(samp+burn) ){
         eta <- X %*% beta
         omega <- sapply( as.vector(eta), my.rpg )
-        V.omega <- solve(t(X) %*% diag(omega) %*% X + P0)
-        m.omega <- V.omega %*% (t(X) %*% kappa + P0 %*% m0)
+#        V.omega <- solve(t(X) %*% diag(omega) %*% X + P0)
+        V.omega <- solve( multd(tX,diag(omega)) %*% X + P0)
+        m.omega <- V.omega %*% m1
         beta <- mvrnorm( n=1, mu=m.omega, Sigma=V.omega )
         if( k>burn ){
             beta.samp[(k-burn),] <- beta
@@ -133,7 +138,7 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0 ){
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0, burn=0 ){
     n <- length(y)
     x1 <- cbind( rep(1,n), x.fixed, x.select )
     k <- ncol(x1) # total covs + intercept
@@ -186,7 +191,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
         if(n.waic!=0){
-            beta.post <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=500 )
+            beta.post <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=burn )
 #            beta.post <- post.samples$beta
             ll <- matrix( ncol=n, nrow=n.waic )
             for( i in 1:n.waic ){
@@ -241,7 +246,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
 
     Ncov <- length(ptr.covs.use)
 
-    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta, m1=vector(length=0), sd1=vector(length=0), n.waic=1000 )
+    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta, m1=vector(length=0), sd1=vector(length=0), n.waic=100, burn=10 )
 
     model.indicator[[1]] <- cbind(1:Ncov)
     if( verbose ){
