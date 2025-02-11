@@ -3,6 +3,7 @@ library(glmnet)
 library(pROC)
 library(BayesLogit)
 library(gplots)
+library(MASS)
 
 my.rpg <- function(z){
     omega <- rpg( num=1, h=1, z )
@@ -24,6 +25,7 @@ Bayes_logit <- function( y=y, X, m0, P0, samp, burn ){
             beta.samp[(k-burn),] <- beta
         }
     }
+    return(beta.samp)
 }
 
 plot.cv.prems <- function( cv.fit, ylim=NULL, cex=1 ){
@@ -184,8 +186,8 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
         if(n.waic!=0){
-            post.samples <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=500 )
-            beta.post <- post.samples$beta
+            beta.post <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=500 )
+#            beta.post <- post.samples$beta
             ll <- matrix( ncol=n, nrow=n.waic )
             for( i in 1:n.waic ){
                 eta <- getEta( yy, x1, beta.post[i,] )
@@ -428,9 +430,9 @@ predict.prems.bayes <- function( fitted.models, newx, y.train, x.train, size=NUL
 
     tau1 <- c( 1e-12, rep(fitted.models$tau,size) )
     iter.cores <- ceiling(iter/no.cores)
-    post.samples <- mclapply(1:no.cores, function(i) {parallel.BayesLogit( y=y.train, X=cbind(1,x.train[,ptr]), m0=rep(0,size+1), P0=diag(tau1), samp=iter.cores, burn=500, dummy=i )}, mc.cores=no.cores )
+    beta <- mclapply(1:no.cores, function(i) {parallel.BayesLogit( y=y.train, X=cbind(1,x.train[,ptr]), m0=rep(0,size+1), P0=diag(tau1), samp=iter.cores, burn=500, dummy=i )}, mc.cores=no.cores )
 
-    beta <- lapply( post.samples, getElement, 'beta' )
+#    beta <- lapply( post.samples, getElement, 'beta' )
 
     ptr.test <- match( colnames(x.train)[ptr], colnames(newx) )
     X <- cbind( 1, newx[,ptr.test,drop=FALSE] )
