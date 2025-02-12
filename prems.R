@@ -4,6 +4,7 @@ library(pROC)
 library(BayesLogit)
 library(gplots)
 library(MASS)
+library(exvatools)
 
 my.rpg <- function(z){
     omega <- rpg( num=1, h=1, z )
@@ -404,7 +405,7 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     return(model.fit)
 }
 
-predict.prems <- function( fitted.models, newx, size=NULL, rank=1, no.cores=10, criteria='waic', fit='mean', family='binomial' ){
+predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1, no.cores=10, criteria='waic', fit='mean', family='binomial' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
     if( fit=='mode' ){
@@ -417,7 +418,11 @@ predict.prems <- function( fitted.models, newx, size=NULL, rank=1, no.cores=10, 
 
     ptr1 <- match( fitted.models$cnames[ptr.covs.use[ptr]], colnames(newx) )
 
-    pred <- as.matrix(cbind(1,newx[,ptr1,drop=FALSE])) %*% best.fit.model
+    if( is.null(newx.fixed) )
+        pred <- as.matrix(cbind( 1, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
+    else
+        pred <- as.matrix(cbind( 1, newx.fixed, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
+
     if( family=='binomial' ){
         pred <- 1 / ( 1 + exp(-pred) )
     }
