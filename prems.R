@@ -258,6 +258,9 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         }
         x.fixed <- t(t(x.fixed)-m.fixed)
         x.fixed <- t(t(x.fixed)/s.fixed)
+    }else{
+        m.fixed <- vector(length=0)
+        s.fixed <- vector(length=0)
     }
 
     ptr.covs.use <- which( s1!=0 )
@@ -266,7 +269,10 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     }
     Ncov <- length(ptr.covs.use)
 
-    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta, m1=vector(length=0), sd1=vector(length=0), n.waic=100, burn=10 )
+    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta,
+                               m1=vector(length=0), sd1=vector(length=0),
+                               m.fixed=m.fixed, sd.fixed=s.fixed,
+                               n.waic=100, burn=10 )
 
     model.indicator[[1]] <- cbind(1:Ncov)
     if( verbose ){
@@ -277,7 +283,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed,
                         y=y, family=family, tau=tau, delta=delta,
                         m1=m1[ptr.covs.use[ptr]], sd1=s1[ptr.covs.use[ptr]],
-                        m.fixed=m.fixed, s.fixed=s.fixed )},
+                        m.fixed=m.fixed, sd.fixed=s.fixed )},
     mc.cores=no.cores)
     if( verbose ){
         print("Finished 1D models")
@@ -303,7 +309,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
                         family=family, tau=tau, delta=delta,
                         m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
                         sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
-                        m.fixed=m.fixed, s.fixed=s.fixed )}, mc.cores=no.cores)
+                        m.fixed=m.fixed, sd.fixed=s.fixed )}, mc.cores=no.cores)
     if( verbose ){
         print("Finished 2D models")
     }
@@ -334,7 +340,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
                                 family=family, tau=tau, delta=delta,
                                 m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
                                 sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
-                                m.fixed=m.fixed, s.fixed=s.fixed )},
+                                m.fixed=m.fixed, sd.fixed=s.fixed )},
             mc.cores=no.cores)
             if( verbose ){
                 print( paste('Finished ',k,'D models',sep='') )
