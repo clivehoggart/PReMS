@@ -139,12 +139,12 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0, burn=10 ){
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, m.fixed, sd.fixed, n.waic=0, burn=10 ){
     n <- length(y)
     x1 <- cbind( rep(1,n), x.fixed, x.select )
     k <- ncol(x1) # total covs + intercept
     k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
-    k2 <- k - k1 # no. fixed covs + intercept
+    k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
     w.aic <- NA
     lppd <- NA
     p.waic <- NA
@@ -176,7 +176,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
   }
 
     if( family=='binomial' ){
-        tau1 <- c( rep(1e-12,k2), rep(tau,k1) )
+        tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
         yy <- 2*y-1
         tmp <- optim( beta.tilde0, fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
         beta.tilde <- tmp$par
@@ -207,12 +207,21 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
             beta.bar <- apply( beta.post, 2, mean )
         }
     }
+    if( k2>0 ){
+        for( ii in 1:k2 ){
+            i <- ii + 1
+            beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
+            beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
+            beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
+            beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
+        }
+    }
     if( k1>0 ){
         for( ii in 1:k1 ){
-            i <- ii + k2
-            beta.tilde[i] <- beta.tilde[i]/sd1[ii]
+            i <- ii + k2 + 1
+            beta.tilde[i] <- beta.tilde[i] / sd1[ii]
             beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
-            beta.bar[i] <- beta.bar[i]/sd1[ii]
+            beta.bar[i] <- beta.bar[i] / sd1[ii]
             beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
         }
     }
@@ -227,24 +236,34 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
 
 ############# Public functions below #############
 
-prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family='gaussian', tau=1, delta=1, max.s=10, no.cores=10, standardize=TRUE, verbose=TRUE ){
-
+prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
+                  family='gaussian', tau=1, delta=1, max.s=10, no.cores=10,
+                  standardize=TRUE, verbose=TRUE ){
     model.indicator <- list()
     fitted.models <- list()
 
     m1 <- apply( x, 2, mean )
     s1 <- apply( x, 2, sd )
+    if( !standardize ){
+        s1 <- rep(1,ncol(x))
+    }
+    x <- t(t(x)-m1)
+    x <- t(t(x)/s1)
+
+    if( !is.null(x.fixed) ){
+        m.fixed <- apply( x.fixed, 2, mean )
+        s.fixed <- apply( x.fixed, 2, sd )
+        if( !standardize ){
+            s.fixed <- rep(1,ncol(x.fixed))
+        }
+        x.fixed <- t(t(x.fixed)-m.fixed)
+        x.fixed <- t(t(x.fixed)/s.fixed)
+    }
+
     ptr.covs.use <- which( s1!=0 )
     if( length(ptr.covs.use) != ncol(x) & verbose ){
         print( paste('WARNING: Variables', setdiff( 1:ncol(x), ptr.covs.use ), 'are monomorphic.') )
     }
-    if( !standardize ){
-        s1 <- rep(1,ncol(x))
-    }
-
-    x <- t(t(x)-m1)
-    x <- t(t(x)/s1)
-
     Ncov <- length(ptr.covs.use)
 
     null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta, m1=vector(length=0), sd1=vector(length=0), n.waic=100, burn=10 )
@@ -254,7 +273,12 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
         print( paste('Searching',Ncov,'1D models (all possible)') )
     }
 
-    fitted.models[[1]] <- mclapply(1:Ncov, function(ptr) {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed, y=y, family=family, tau=tau, delta=delta, m1=m1[ptr.covs.use[ptr]], sd1=s1[ptr.covs.use[ptr]] )}, mc.cores=no.cores)
+    fitted.models[[1]] <- mclapply(1:Ncov, function(ptr)
+    {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed,
+                        y=y, family=family, tau=tau, delta=delta,
+                        m1=m1[ptr.covs.use[ptr]], sd1=s1[ptr.covs.use[ptr]],
+                        m.fixed=m.fixed, s.fixed=s.fixed )},
+    mc.cores=no.cores)
     if( verbose ){
         print("Finished 1D models")
     }
@@ -278,7 +302,8 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
                         x.fixed=x.fixed, y=y,
                         family=family, tau=tau, delta=delta,
                         m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
-                        sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]] )}, mc.cores=no.cores)
+                        sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
+                        m.fixed=m.fixed, s.fixed=s.fixed )}, mc.cores=no.cores)
     if( verbose ){
         print("Finished 2D models")
     }
@@ -308,7 +333,8 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
                                 x.fixed=x.fixed, y=y,
                                 family=family, tau=tau, delta=delta,
                                 m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
-                                sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]] )},
+                                sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
+                                m.fixed=m.fixed, s.fixed=s.fixed )},
             mc.cores=no.cores)
             if( verbose ){
                 print( paste('Finished ',k,'D models',sep='') )
@@ -330,8 +356,10 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5, family
         }
     }
 
-    ret <- list( null, fitted.models, model.indicator, colnames(x), m1, s1, tau, standardize, family )
-    names(ret) <- c('null','fitted.models','model.indicator', 'cnames', 'm', 'sd', 'tau', 'standardize', 'family' )
+    ret <- list( null, fitted.models, model.indicator, c(colnames(x),colnames(x.fixed)),
+                m1, s1, m.fixed, s.fixed, tau, standardize, family )
+    names(ret) <- c('null','fitted.models','model.indicator', 'cnames',
+                    'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family' )
 
     return( ret )
 }
@@ -348,22 +376,38 @@ ModelSearchIncrease <- function( fitted.models, X, y, no.cores=10, max.s=max.s )
     fitted.models$model.indicator[[k+1]] <- stepUP( fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s )
 
     fitted.models$fitted.models[[k+1]] <- mclapply(1:nrow(fitted.models$model.indicator[[k+1]]) , function(i)
-    {getMargLikelihood2( x.select=X[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]], y=y,
-                        family=fitted.models$family, tau=fitted.models$tau, delta=fitted.models$delta,
+    {getMargLikelihood2( x.select=X[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                        y=y, family=fitted.models$family,
+                        tau=fitted.models$tau, delta=fitted.models$delta,
                         m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]] )}, mc.cores=no.cores)
+                        sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]] )},
+    mc.cores=no.cores)
     return(fitted.models)
 }
 
-fill.ICs <- function( fitted.models, y, x, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
+fill.ICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
     X <- t(t(x)-fitted.models$m)
     X <- t(t(X)/fitted.models$sd)
+
+    X.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
+    X.fixed <- t(t(X.fixed)/fitted.models$sd.fixed)
+
     ptr.covs.use <- which( fitted.models$sd!=0 )
     for( size in model.sizes ){
         ic <- sapply( fitted.models$fitted.models[[size]], getElement, 'aic' )
         s <- order(ic)
         ptr <- fitted.models$model.indicator[[size]][s[1:n.rank],, drop=FALSE]
-        tmp <-  mclapply( 1:n.rank, function(ii) {getMargLikelihood2( x.select=X[ ,ptr.covs.use[ptr[ii,]], drop=FALSE], y=y, tau=fitted.models$tau, family=fitted.models$family, n.waic=n.waic, m1=fitted.models$m[ptr.covs.use[ptr[ii,]]], sd1=fitted.models$sd[ptr.covs.use[ptr[ii,]]] )}, mc.cores=no.cores )
+        tmp <-  mclapply( 1:n.rank,
+                         function(ii){getMargLikelihood2(
+                                          x.select=X[ ,ptr.covs.use[ptr[ii,]], drop=FALSE],
+                                          x.fixed=X.fixed,
+                                          y=y, tau=fitted.models$tau,
+                                          family=fitted.models$family,
+                                          n.waic=n.waic,
+                                          m1=fitted.models$m[ptr.covs.use[ptr[ii,]]],
+                                          sd1=fitted.models$sd[ptr.covs.use[ptr[ii,]]],
+                                          m.fixed=m.fixed, s.fixed=s.fixed )},
+                         mc.cores=no.cores )
         for( i in 1:n.rank ){
             fitted.models$fitted.models[[size]][[s[i]]] <- tmp[[i]]
         }
@@ -507,7 +551,7 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=10000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
+cv.prems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=1000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
