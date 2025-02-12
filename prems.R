@@ -139,7 +139,7 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0, burn=0 ){
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, n.waic=0, burn=10 ){
     n <- length(y)
     x1 <- cbind( rep(1,n), x.fixed, x.select )
     k <- ncol(x1) # total covs + intercept
