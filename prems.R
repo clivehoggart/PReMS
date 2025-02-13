@@ -564,7 +564,7 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=1000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
+cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=100, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -586,7 +586,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
-        tau.est <- TauEst( y[train], x[train,], x.fixed[train,],
+        tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,],
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
         tau <- ifelse( lasso.penalty=="lambda.1se", tau.est$tau.1se, tau.est$tau.opt )
         my.fit <- prems( y=y[train], x=x[train,], family='binomial', tau=tau, k.max=k.max, max.s=max.s, standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
@@ -663,7 +663,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.c
     }
     if( is.null(fit) ){
         lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
-        fit <- cv.glmnet( x=as.matrix(x.fixed,x), y=y, penalty.factor=lambda.factor,
+        fit <- cv.glmnet( x=as.matrix(cbind(x.fixed,x)), y=y, penalty.factor=lambda.factor,
                          family=family, alpha=1, nfolds=nfolds,
                          type.measure='deviance', grouped=FALSE, standardize=standardize )
     }
