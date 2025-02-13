@@ -589,7 +589,9 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
         tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,],
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
         tau <- ifelse( lasso.penalty=="lambda.1se", tau.est$tau.1se, tau.est$tau.opt )
-        my.fit <- prems( y=y[train], x=x[train,], family='binomial', tau=tau, k.max=k.max, max.s=max.s, standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
+        my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
+                        family='binomial', tau=tau, k.max=k.max, max.s=max.s,
+                        standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
 #        my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
