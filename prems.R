@@ -362,7 +362,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         }
     }
 
-    ret <- list( null, fitted.models, model.indicator, c(colnames(x),colnames(x.fixed)),
+    ret <- list( null, fitted.models, model.indicator, c(colnames(x.fixed),colnames(x)),
                 m1, s1, m.fixed, s.fixed, tau, standardize, family )
     names(ret) <- c('null','fitted.models','model.indicator', 'cnames',
                     'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family' )
