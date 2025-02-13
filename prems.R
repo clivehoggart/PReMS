@@ -362,9 +362,9 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         }
     }
 
-    ret <- list( null, fitted.models, model.indicator, c(colnames(x.fixed),colnames(x)),
+    ret <- list( null, fitted.models, model.indicator, colnames(x.fixed), colnames(x),
                 m1, s1, m.fixed, s.fixed, tau, standardize, family )
-    names(ret) <- c('null','fitted.models','model.indicator', 'cnames',
+    names(ret) <- c('null','fitted.models','model.indicator', 'cnames.fixed', 'cnames',
                     'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family' )
 
     return( ret )
@@ -451,7 +451,7 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
     for( i in 1:length(ptr) ){
         model.fit[[i]] <- fitted.models$fitted.models[[size]][[ptr[i]]]
-        nmes <- c('I',fitted.models$cnames[ptr.covs.use[ptr1[i,]]])
+        nmes <- c( 'I', fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
         names(model.fit[[i]]$beta) <- nmes
         names(model.fit[[i]]$beta.bar) <- nmes
     }
