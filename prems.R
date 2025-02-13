@@ -370,9 +370,13 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     return( ret )
 }
 
-ModelSearchIncrease <- function( fitted.models, X, y, no.cores=10, max.s=max.s ){
+ModelSearchIncrease <- function( fitted.models, X, X.fixed, y, no.cores=10, max.s=max.s ){
     X <- t(t(X)-fitted.models$m)
     X <- t(t(X)/fitted.models$sd)
+
+    X.fixed <- t(t(X.fixed)-fitted.models$m.fixed)
+    X.fixed <- t(t(X.fixed)/fitted.models$sd.fixed)
+
     k <- length(fitted.models$fitted.models)
     ptr.covs.use <- which( fitted.models$sd!=0 )
     Ncov <- length(ptr.covs.use)
@@ -383,19 +387,21 @@ ModelSearchIncrease <- function( fitted.models, X, y, no.cores=10, max.s=max.s )
 
     fitted.models$fitted.models[[k+1]] <- mclapply(1:nrow(fitted.models$model.indicator[[k+1]]) , function(i)
     {getMargLikelihood2( x.select=X[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                        x.fixed=X.fixed,
                         y=y, family=fitted.models$family,
                         tau=fitted.models$tau, delta=fitted.models$delta,
                         m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]] )},
+                        sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                        m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed )},
     mc.cores=no.cores)
     return(fitted.models)
 }
 
-fill.ICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
-    X <- t(t(x)-fitted.models$m)
+fill.ICs <- function( fitted.models, y, X, X.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
+    X <- t(t(X)-fitted.models$m)
     X <- t(t(X)/fitted.models$sd)
 
-    X.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
+    X.fixed <- t(t(X.fixed)-fitted.models$m.fixed)
     X.fixed <- t(t(X.fixed)/fitted.models$sd.fixed)
 
     ptr.covs.use <- which( fitted.models$sd!=0 )
@@ -412,7 +418,8 @@ fill.ICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.
                                           n.waic=n.waic,
                                           m1=fitted.models$m[ptr.covs.use[ptr[ii,]]],
                                           sd1=fitted.models$sd[ptr.covs.use[ptr[ii,]]],
-                                          m.fixed=m.fixed, s.fixed=s.fixed )},
+                                          m.fixed=fitted.models$m.fixed,
+                                          sd.fixed=fitted.models$sd.fixed )},
                          mc.cores=no.cores )
         for( i in 1:n.rank ){
             fitted.models$fitted.models[[size]][[s[i]]] <- tmp[[i]]
