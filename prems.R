@@ -668,7 +668,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.c
                          type.measure='deviance', grouped=FALSE, standardize=standardize )
     }
 
-    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:1+ncol(x.fixed)))]
+    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:(1+ncol(x.fixed)))]
     s <- rep(1,ncol(x))
     if( standardize ){
         ptr <- match( names(beta), colnames(x) )
