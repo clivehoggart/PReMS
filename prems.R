@@ -397,7 +397,7 @@ ModelSearchIncrease <- function( fitted.models, X, X.fixed, y, no.cores=10, max.
     return(fitted.models)
 }
 
-fill.ICs <- function( fitted.models, y, X, X.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
+fillICs <- function( fitted.models, y, X, X.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
     X <- t(t(X)-fitted.models$m)
     X <- t(t(X)/fitted.models$sd)
 
@@ -564,7 +564,7 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=1000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
+cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=1000, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -586,13 +586,16 @@ cv.prems <- function( y, x, no.cores=10, k.min=1, k.max, max.s=50, max2way='all'
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
-        tau.est <- TauEst( y[train], x[train,], standardize=standardize, n.coef=n.coef, nfolds=20 )
+        tau.est <- TauEst( y[train], x[train,], x.fixed[train,],
+                          standardize=standardize, n.coef=n.coef, nfolds=10 )
         tau <- ifelse( lasso.penalty=="lambda.1se", tau.est$tau.1se, tau.est$tau.opt )
         my.fit <- prems( y=y[train], x=x[train,], family='binomial', tau=tau, k.max=k.max, max.s=max.s, standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
-        my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
+#        my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
-            pred[test,kk] <- predict.prems( my.fit, newx=x[test,,drop=FALSE], size=k, fit='mean' )
+            pred[test,kk] <- predict.prems( my.fit,
+                                           newx=x[test,,drop=FALSE], newx=x.fixed[test,,drop=FALSE],
+                                           size=k, criteria='aic', fit='mode' )
         }
         if( verbose ){
             print(paste('Fold',i,'complete.'))
@@ -653,16 +656,20 @@ new.optim <- function( cvm, cvsd ){
     return(c(best,one.se[best]))
 }
 
-TauEst <- function( y, x, family='binomial', standardize=TRUE, n.coef=1, fit=NULL, nfolds=NULL ){
+TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.coef=1, fit=NULL,
+                   nfolds=NULL ){
     if( is.null(nfolds) ){
         nfolds <- length(y)
     }
     if( is.null(fit) ){
-        fit <- cv.glmnet( x=as.matrix(x), y=y, family=family, alpha=1, nfolds=nfolds, type.measure='deviance', grouped=FALSE, standardize=standardize )
+        lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
+        fit <- cv.glmnet( x=as.matrix(x.fixed,x), y=y, penalty.factor=lambda.factor,
+                         family=family, alpha=1, nfolds=nfolds,
+                         type.measure='deviance', grouped=FALSE, standardize=standardize )
     }
 
-    beta <- getCoefGlmnet( fit, s='lambda.min' )
-    s <- rep(1,length(beta))
+    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:1+ncol(x.fixed)))]
+    s <- rep(1,ncol(x))
     if( standardize ){
         ptr <- match( names(beta), colnames(x) )
         s <- apply( x[,ptr], 2, sd )
@@ -672,7 +679,6 @@ TauEst <- function( y, x, family='binomial', standardize=TRUE, n.coef=1, fit=NUL
     n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
     ptr <- 1:n.coef
     tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
-    tau.opt <- lambda / max(abs(beta1))
 
     beta <- getCoefGlmnet( fit, s='lambda.1se' )
     s <- rep(1,length(beta))
