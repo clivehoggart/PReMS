@@ -594,7 +594,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
             pred[test,kk] <- predict.prems( my.fit,
-                                           newx=x[test,,drop=FALSE], newx=x.fixed[test,,drop=FALSE],
+                                           newx=x[test,,drop=FALSE], newx.fixed=x.fixed[test,,drop=FALSE],
                                            size=k, criteria='aic', fit='mode' )
         }
         if( verbose ){
