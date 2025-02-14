@@ -663,15 +663,15 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.c
     if( is.null(nfolds) ){
         nfolds <- length(y)
     }
-    if( is.null(fit) )
+    if( is.null(fit) ){
         if( !is.null(x.fixed) ){
             lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
         }else{
             lambda.factor <- rep(1,ncol(x))
         }
         fit <- cv.glmnet( x=as.matrix(cbind(x.fixed,x)), y=y, penalty.factor=lambda.factor,
-                         family=family, alpha=1, nfolds=nfolds,
-                         type.measure='deviance', grouped=FALSE, standardize=standardize )
+                     family=family, alpha=1, nfolds=nfolds,
+                     type.measure='deviance', grouped=FALSE, standardize=standardize )
     }
 
     beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:(1+ncol(x.fixed)))]
