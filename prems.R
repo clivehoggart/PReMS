@@ -664,7 +664,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.c
         nfolds <- length(y)
     }
     if( is.null(fit) ){
-        if( ncol(x.fixed))!=0 )
+        if( ncol(x.fixed)!=0 )
             lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
         else
             lambda.factor <- rep(1,ncol(x))
