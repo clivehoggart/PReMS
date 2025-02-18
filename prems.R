@@ -564,7 +564,7 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=100, n.coef=1, lasso.penalty="lambda.min", verbose=TRUE ){
+cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=100, n.coef=1, lasso.penalty=1, verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -588,7 +588,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
         test <- which( foldid==i )
         tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,],
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
-        tau <- ifelse( lasso.penalty=="lambda.1se", tau.est$tau.1se, tau.est$tau.opt )
+        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
         my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                         family='binomial', tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
