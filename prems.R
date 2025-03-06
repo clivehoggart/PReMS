@@ -71,7 +71,7 @@ null.sim <- function( fitted.models, X, y, from=from, samples, no.cores=10 ){
         x.null[,ptr] <- X[,ptr]
 
         tmp <- ModelSearchIncrease( fitted.models=fitted.models,  X=x.null, y=y, no.cores=no.cores, from=from )
-        tmp <- fill.ICs( fitted.models=tmp, y=y, X=x.null, n.waic=5000, model.sizes=from+1, no.cores=no.cores )
+        tmp <- fillICs( fitted.models=tmp, y=y, X=x.null, n.waic=5000, model.sizes=from+1, no.cores=no.cores )
         tmp2 <- getICs(tmp)
         waic.null[i] <- tmp2[ from+2, 4 ]
     }
@@ -588,15 +588,18 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
         test <- which( foldid==i )
         tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,],
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
-        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
+#        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
+        tau <- tau.est$tau.opt * lasso.penalty
         my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                         family='binomial', tau=tau, k.max=k.max, max.s=max.s,
-                        standardize=standardize, max2way=max2way, no.cores=no.cores, verbose=FALSE )
+                        standardize=standardize, max2way=max2way,
+                        no.cores=no.cores, verbose=FALSE )
 #        my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
             pred[test,kk] <- predict.prems( my.fit,
-                                           newx=x[test,,drop=FALSE], newx.fixed=x.fixed[test,,drop=FALSE],
+                                           newx=x[test,,drop=FALSE],
+                                           newx.fixed=x.fixed[test,,drop=FALSE],
                                            size=k, criteria='aic', fit='mode' )
         }
         if( verbose ){
