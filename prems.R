@@ -590,6 +590,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
 #        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
         tau <- tau.est$tau.opt * lasso.penalty
+        print(paste0("tau=",tau))
         my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                         family='binomial', tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way,
@@ -661,8 +662,8 @@ new.optim <- function( cvm, cvsd ){
     return(c(best,one.se[best]))
 }
 
-TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.coef=1, fit=NULL,
-                   nfolds=NULL ){
+TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
+                   n.coef=1, fit=NULL, nfolds=NULL ){
     if( is.null(nfolds) ){
         nfolds <- length(y)
     }
@@ -678,29 +679,36 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE, n.c
     }
 
     beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:(1+ncol(x.fixed)))]
-    s <- rep(1,ncol(x))
-    if( standardize ){
-        ptr <- match( names(beta), colnames(x) )
-        s <- apply( x[,ptr], 2, sd )
+    if( length(beta) > 0 ){
+        s <- rep(1,ncol(x))
+        if( standardize ){
+            ptr <- match( names(beta), colnames(x) )
+            s <- apply( x[,ptr,drop=FALSE], 2, sd )
+        }
+        lambda <- fit$lambda.min * length(y)
+        beta1 <- sort(abs(beta*s),decreasing=TRUE)
+        n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
+        ptr <- 1:n.coef
+        tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
+    }else{
+        tau.opt <- NA
     }
-    lambda <- fit$lambda.min * length(y)
-    beta1 <- sort(abs(beta*s),decreasing=TRUE)
-    n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
-    ptr <- 1:n.coef
-    tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
 
-    beta <- getCoefGlmnet( fit, s='lambda.1se' )
-    s <- rep(1,length(beta))
-    if( standardize ){
-        ptr <- match( names(beta), colnames(x) )
-        s <- apply( x[,ptr], 2, sd )
+    beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:(1+ncol(x.fixed)))]
+    if( length(beta) > 0 ){
+        s <- rep(1,length(beta))
+        if( standardize ){
+            ptr <- match( names(beta), colnames(x) )
+            s <- apply( x[,ptr,drop=FALSE], 2, sd )
+        }
+        lambda <- fit$lambda.1se * length(y)
+        beta1 <- sort(abs(beta*s),decreasing=TRUE)
+        n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
+        ptr <- 1:n.coef
+        tau.1se <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
+    }else{
+        tau.1se <- NA
     }
-    lambda <- fit$lambda.1se * length(y)
-    beta1 <- sort(abs(beta*s),decreasing=TRUE)
-    n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
-    ptr <- 1:n.coef
-    tau.1se <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
-    tau.1se <- lambda / max(abs(beta1))
 
     ret <- list( tau.opt, tau.1se, fit )
     names(ret) <- c('tau.opt', 'tau.1se', 'fit.lasso')
