@@ -272,7 +272,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta,
                                m1=vector(length=0), sd1=vector(length=0),
                                m.fixed=m.fixed, sd.fixed=s.fixed,
-                               n.waic=100, burn=10 )
+                               n.waic=0, burn=10 )
 
     model.indicator[[1]] <- cbind(1:Ncov)
     if( verbose ){
@@ -370,12 +370,14 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     return( ret )
 }
 
-ModelSearchIncrease <- function( fitted.models, X, X.fixed, y, no.cores=10, max.s=max.s ){
-    X <- t(t(X)-fitted.models$m)
-    X <- t(t(X)/fitted.models$sd)
+ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10, max.s=max.s ){
+    x <- t(t(x)-fitted.models$m)
+    x <- t(t(x)/fitted.models$sd)
 
-    X.fixed <- t(t(X.fixed)-fitted.models$m.fixed)
-    X.fixed <- t(t(X.fixed)/fitted.models$sd.fixed)
+    if( !is.null(x.fixed) ){
+        x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
+        x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
+    }
 
     k <- length(fitted.models$fitted.models)
     ptr.covs.use <- which( fitted.models$sd!=0 )
@@ -386,8 +388,8 @@ ModelSearchIncrease <- function( fitted.models, X, X.fixed, y, no.cores=10, max.
     fitted.models$model.indicator[[k+1]] <- stepUP( fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s )
 
     fitted.models$fitted.models[[k+1]] <- mclapply(1:nrow(fitted.models$model.indicator[[k+1]]) , function(i)
-    {getMargLikelihood2( x.select=X[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        x.fixed=X.fixed,
+    {getMargLikelihood2( x.select=x[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                        x.fixed=x.fixed,
                         y=y, family=fitted.models$family,
                         tau=fitted.models$tau, delta=fitted.models$delta,
                         m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
@@ -397,12 +399,14 @@ ModelSearchIncrease <- function( fitted.models, X, X.fixed, y, no.cores=10, max.
     return(fitted.models)
 }
 
-fillICs <- function( fitted.models, y, X, X.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
-    X <- t(t(X)-fitted.models$m)
-    X <- t(t(X)/fitted.models$sd)
+fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
+    x <- t(t(x)-fitted.models$m)
+    x <- t(t(x)/fitted.models$sd)
 
-    X.fixed <- t(t(X.fixed)-fitted.models$m.fixed)
-    X.fixed <- t(t(X.fixed)/fitted.models$sd.fixed)
+    if( !is.null(x.fixed) ){
+        x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
+        x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
+    }
 
     ptr.covs.use <- which( fitted.models$sd!=0 )
     for( size in model.sizes ){
@@ -411,8 +415,8 @@ fillICs <- function( fitted.models, y, X, X.fixed=NULL, n.waic, no.cores=10, n.r
         ptr <- fitted.models$model.indicator[[size]][s[1:n.rank],, drop=FALSE]
         tmp <-  mclapply( 1:n.rank,
                          function(ii){getMargLikelihood2(
-                                          x.select=X[ ,ptr.covs.use[ptr[ii,]], drop=FALSE],
-                                          x.fixed=X.fixed,
+                                          x.select=x[ ,ptr.covs.use[ptr[ii,]], drop=FALSE],
+                                          x.fixed=x.fixed,
                                           y=y, tau=fitted.models$tau,
                                           family=fitted.models$family,
                                           n.waic=n.waic,
@@ -564,7 +568,10 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL, n.waic=100, n.coef=1, lasso.penalty=1, verbose=TRUE ){
+cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max,
+                     max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
+                     n.waic=100, n.coef=1, lasso.factor=1,
+                     criteria='aic', fit='mode', family='binomial', verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -586,22 +593,25 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
-        tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,],
+        tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,], family=family,
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
 #        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
-        tau <- tau.est$tau.opt * lasso.penalty
+        tau <- tau.est$tau.opt * lasso.factor
         print(paste0("tau=",tau))
         my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
-                        family='binomial', tau=tau, k.max=k.max, max.s=max.s,
+                        family=family, tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way,
                         no.cores=no.cores, verbose=FALSE )
-#        my.fit <- fill.ICs( fitted.models=my.fit, y=y[train], x=x[train,], n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
+        if( criteria=='waic' | fit=='mode' ){
+            my.fit <- fillICs( fitted.models=my.fit, y=y[train], x=x[train,],
+                              n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
+        }
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
             pred[test,kk] <- predict.prems( my.fit,
                                            newx=x[test,,drop=FALSE],
                                            newx.fixed=x.fixed[test,,drop=FALSE],
-                                           size=k, criteria='aic', fit='mode' )
+                                           size=k, family=family, criteria=criteria, fit=fit )
         }
         if( verbose ){
             print(paste('Fold',i,'complete.'))
@@ -609,11 +619,15 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, max.s=50,
     }
     for( k in k.min:k.max ){
         kk <- k - k.min + 1
-        lp1 <- log(pred[,kk])
-        lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
-        lp0 <- log(1-pred[,kk])
-        lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
-        pwll[,kk] <- y*lp1 + (1-y)*lp0
+        if( family=='binomial' ){
+            lp1 <- log(pred[,kk])
+            lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
+            lp0 <- log(1-pred[,kk])
+            lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
+            pwll[,kk] <- y*lp1 + (1-y)*lp0
+        }else if( family=='gaussian' ){
+            pwll[,kk] <- -(y-pred)^2
+        }
         for( i in 1:nfolds ){
             test <- which( foldid==i )
             cv.ll[i,kk] <- mean(pwll[test,kk])
@@ -672,6 +686,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
             lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
         }else{
             lambda.factor <- rep(1,ncol(x))
+            x.fixed <- matrix( ncol=0, nrow=length(y) )
         }
         fit <- cv.glmnet( x=as.matrix(cbind(x.fixed,x)), y=y, penalty.factor=lambda.factor,
                      family=family, alpha=1, nfolds=nfolds,
