@@ -153,29 +153,27 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
     dic <- NA
     beta.bar <- NA
 
-  if( is.null(beta.tilde0) ){
-    beta.tilde0 <- rep(0,k)
-  }
-
-  if( family=='gaussian' ){
-      norm.const <- sd(y)
-      y <- y/norm.const
-      y.y <- sum(y*y)
-
-      M1 <- diag(tau,nrow=ncol(x1)) + t(x1) %*% x1
-      Inv.M1 <- solve(M1)
-      q1 <- y.y - (t(y) %*% x1 %*% Inv.M1 %*% t(x1) %*% y)
-
-      l.gamma1 <- lgamma( 0.5*(n+delta+k1) ) - (n-k1)*log(tau)/2 - (n+delta+k1)*log(1+q1/tau)/2 - lgamma(0.5*(delta+k1)) - 0.5*log(det(M1))
-      beta.tilde <- (Inv.M1 %*% t(x1) %*% y) * norm.const
-      aic <- 2* (sum(y - x1 %*% beta.tilde)^2 + length(beta.tilde) - 1)
-      if(n.waic!=0){
-          S <- t(y - x1 %*% beta.tilde) %*% y
-          post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" )
-      }
-  }
-
-    if( family=='binomial' ){
+    if( is.null(beta.tilde0) ){
+        beta.tilde0 <- rep(0,k)
+    }
+    
+    if( family=='gaussian' ){
+        norm.const <- sd(y)
+        y <- y/norm.const
+        y.y <- sum(y*y)
+        
+        M1 <- diag(tau,nrow=ncol(x1)) + t(x1) %*% x1
+        Inv.M1 <- solve(M1)
+        q1 <- y.y - (t(y) %*% x1 %*% Inv.M1 %*% t(x1) %*% y)
+        
+        l.gamma1 <- lgamma( 0.5*(n+delta+k1) ) - (n-k1)*log(tau)/2 - (n+delta+k1)*log(1+q1/tau)/2 - lgamma(0.5*(delta+k1)) - 0.5*log(det(M1))
+        beta.tilde <- (Inv.M1 %*% t(x1) %*% y) * norm.const
+        aic <- 2* (sum(y - x1 %*% beta.tilde)^2 + length(beta.tilde) - 1)
+        if(n.waic!=0){
+            S <- t(y - x1 %*% beta.tilde) %*% y
+            post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" )
+        }
+    }if( family=='binomial' ){
         tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
         yy <- 2*y-1
         tmp <- optim( beta.tilde0, fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
