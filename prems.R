@@ -1,7 +1,7 @@
 library(parallel)
 library(glmnet)
 library(pROC)
-library(BayesLogit)
+#library(BayesLogit)
 library(gplots)
 library(MASS)
 library(exvatools)
@@ -139,6 +139,62 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
+getMargLikelihood.clean <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, m.fixed, sd.fixed, n.waic=0, burn=10 ){
+    n <- length(y)
+    x1 <- cbind( rep(1,n), x.fixed, x.select )
+    k <- ncol(x1) # total covs + intercept
+    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
+    k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
+    w.aic <- NA
+    lppd <- NA
+    p.waic <- NA
+    p.waic2 <- NA
+    p.anna <- NA
+    dic <- NA
+    beta.bar <- NA
+
+    if( is.null(beta.tilde0) ){
+        beta.tilde0 <- rep(0,k)
+    }
+
+    if( family=='cox' ){
+        fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ) )
+        beta.tilde <- fit$coef
+        l.gamma1 <- fit$loglik[2]
+    }
+    if( family=='gaussian' | family=='binomial' ){
+        fit <- glm( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ), family=family )
+        beta.tilde <- fit$coef
+        l.gamma1 <- -fit$deviance / 2
+        aic <- fit$aic
+    }
+    if( k2>0 ){
+        for( ii in 1:k2 ){
+            i <- ii + 1
+            beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
+            beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
+            beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
+            beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
+        }
+    }
+    if( k1>0 ){
+        for( ii in 1:k1 ){
+            i <- ii + k2 + 1
+            beta.tilde[i] <- beta.tilde[i] / sd1[ii]
+            beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
+            beta.bar[i] <- beta.bar[i] / sd1[ii]
+            beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
+        }
+    }
+    ret <- list( -l.gamma1, aic, w.aic, beta.tilde, beta.bar, lppd, p.waic )
+######################################################################
+# Returning MINUS log-posterior to be consistent with other measures #
+# of model fit, ie ICs, which are minimised for best fit             #
+######################################################################
+    names(ret) <- c( 'ML', 'aic', 'waic', 'beta', 'beta.bar', 'lppd', 'p.waic' )
+    return( ret )
+}
+
 getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, m.fixed, sd.fixed, n.waic=0, burn=10 ){
     n <- length(y)
     x1 <- cbind( rep(1,n), x.fixed, x.select )
@@ -156,16 +212,30 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
     if( is.null(beta.tilde0) ){
         beta.tilde0 <- rep(0,k)
     }
-    
+
+    if( family=='cox' ){
+        if( k1==0 & k2==0 ){
+            fit <- coxph( y ~ 1 )
+        }else if( k1==0 & k2!=0 ){
+            fit <- coxph( y ~ x.fixed )
+        }else if( k1!=0 & k2==0 ){
+            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE ) )
+        }else{
+            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ) )
+        }
+        beta.tilde <- fit$coef
+        l.gamma1 <- fit$loglik[2]
+        aic = -2*fit$loglik[2] + 2*length(beta.tilde)
+    }
     if( family=='gaussian' ){
         norm.const <- sd(y)
         y <- y/norm.const
         y.y <- sum(y*y)
-        
+
         M1 <- diag(tau,nrow=ncol(x1)) + t(x1) %*% x1
         Inv.M1 <- solve(M1)
         q1 <- y.y - (t(y) %*% x1 %*% Inv.M1 %*% t(x1) %*% y)
-        
+
         l.gamma1 <- lgamma( 0.5*(n+delta+k1) ) - (n-k1)*log(tau)/2 - (n+delta+k1)*log(1+q1/tau)/2 - lgamma(0.5*(delta+k1)) - 0.5*log(det(M1))
         beta.tilde <- (Inv.M1 %*% t(x1) %*% y) * norm.const
         aic <- 2* (sum(y - x1 %*% beta.tilde)^2 + length(beta.tilde) - 1)
@@ -173,7 +243,8 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
             S <- t(y - x1 %*% beta.tilde) %*% y
             post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" )
         }
-    }if( family=='binomial' ){
+    }
+    if( family=='binomial' ){
         tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
         yy <- 2*y-1
         tmp <- optim( beta.tilde0, fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
@@ -205,23 +276,39 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
             beta.bar <- apply( beta.post, 2, mean )
         }
     }
-    if( k2>0 ){
-        for( ii in 1:k2 ){
-            i <- ii + 1
-            beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
-            beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
-            beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
-            beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
+    if( family=='binomial' | family=='gaussian' ){
+        if( k2>0 ){
+            for( ii in 1:k2 ){
+                i <- ii + 1
+                beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
+                beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
+                beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
+                beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
+            }
         }
-    }
-    if( k1>0 ){
-        for( ii in 1:k1 ){
-            i <- ii + k2 + 1
-            beta.tilde[i] <- beta.tilde[i] / sd1[ii]
-            beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
-            beta.bar[i] <- beta.bar[i] / sd1[ii]
-            beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
+        if( k1>0 ){
+            for( ii in 1:k1 ){
+                i <- ii + k2 + 1
+                beta.tilde[i] <- beta.tilde[i] / sd1[ii]
+                beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
+                beta.bar[i] <- beta.bar[i] / sd1[ii]
+                beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
+            }
         }
+    }else if( family=='cox' ){
+        if( k2>0 ){
+            for( i in 1:k2 ){
+                beta.tilde[i] <- beta.tilde[i] / sd.fixed[i]
+                beta.bar[i] <- beta.bar[i] / sd.fixed[i]
+            }
+        }
+        if( k1>0 ){
+            for( ii in 1:k1 ){
+                i <- ii + k2
+                beta.tilde[i] <- beta.tilde[i] / sd1[ii]
+                beta.bar[i] <- beta.bar[i] / sd1[ii]
+            }
+        }        
     }
     ret <- list( -l.gamma1, aic, w.aic, beta.tilde, beta.bar, lppd, p.waic )
 ######################################################################
@@ -453,7 +540,11 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
     for( i in 1:length(ptr) ){
         model.fit[[i]] <- fitted.models$fitted.models[[size]][[ptr[i]]]
-        nmes <- c( 'I', fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
+        if( family=='binomial' | family=='gaussian' ){
+            nmes <- c( 'I', fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
+        }else if( family=='cox' ){
+            nmes <- c( fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
+        }
         names(model.fit[[i]]$beta) <- nmes
         names(model.fit[[i]]$beta.bar) <- nmes
     }
@@ -477,14 +568,19 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
 
     ptr1 <- match( fitted.models$cnames[ptr.covs.use[ptr]], colnames(newx) )
 
+    I = 1
+    if( family=='cox' )
+        I = NULL
     if( is.null(newx.fixed) )
-        pred <- as.matrix(cbind( 1, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
+        pred <- as.matrix(cbind( I, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
     else
-        pred <- as.matrix(cbind( 1, newx.fixed, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
+        pred <- as.matrix(cbind( I, newx.fixed, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
 
     if( family=='binomial' ){
         pred <- 1 / ( 1 + exp(-pred) )
     }
+    if( family=='cox' )
+        pred = exp(pred)
     return(pred)
 }
 
@@ -566,7 +662,7 @@ prems.clean <- function( all.fits ){
     return( ret )
 }
 
-cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max,
+cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
                      max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
                      n.waic=100, n.coef=1, lasso.factor=1,
                      criteria='aic', fit='mode', family='binomial', verbose=TRUE ){
@@ -591,16 +687,21 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max,
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
-        tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,], family=family,
+        if( is.null(tau.i) ){
+            tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,], family=family,
                           standardize=standardize, n.coef=n.coef, nfolds=10 )
 #        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
-        tau <- tau.est$tau.opt * lasso.factor
-        print(paste0("tau=",tau))
+            tau <- tau.est$tau.opt * lasso.factor
+            print(paste0("tau=",tau))
+        }else{
+            tau=tau.i
+        }
         my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                         family=family, tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way,
                         no.cores=no.cores, verbose=FALSE )
-        if( criteria=='waic' | fit=='mode' ){
+#        if( criteria=='waic' | fit=='mode' ){
+        if( criteria=='waic'  | fit=='mean' ){
             my.fit <- fillICs( fitted.models=my.fit, y=y[train], x=x[train,],
                               n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         }
@@ -639,8 +740,8 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max,
 
     sizes <- (k.min:k.max)[prems.optim( cvm, cvsd )]
 
-    ret <- list( sizes[1], sizes[2], cvm, cvsd )
-    names(ret) <- c('best','one.se','cvm','cvsd')
+    ret <- list( sizes[1], sizes[2], cvm, cvsd, cv.ll )
+    names(ret) <- c('best','one.se','cvm','cvsd', 'cv.all' )
     return( ret )
 }
 
@@ -728,11 +829,11 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
     return(ret)
 }
 
-my.auc <- function( my.fit, sizes, X, y, rank=1 ){
+my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='aic' ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
-        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria='waic', fit='mean', family='binomial' )
+        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria, fit='mode', family='binomial' )
     }
 #    r <- matrix(ncol=3,nrow=length(sizes))
     r <- list()
