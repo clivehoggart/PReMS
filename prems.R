@@ -6,6 +6,29 @@ library(gplots)
 library(MASS)
 library(exvatools)
 
+cox_pl_left_trunc <- function( Surv_obj, eta ) {
+    if( length(eta) != nrow(Surv_obj) ) stop("eta and surv must be same length")
+
+    start  <- Surv_obj[, 1]
+    stop   <- Surv_obj[, 2]
+    status <- Surv_obj[, 3]
+
+  # order by stop time
+    ord <- order(stop)
+    start  <- start[ord]
+    stop   <- stop[ord]
+    status <- status[ord]
+    eta    <- eta[ord]
+
+    loglik <- 0
+    for( i in which(status == 1) ){
+        t_i <- stop[i]
+        riskset <- which( start <= t_i & stop >= t_i )
+        loglik <- loglik + eta[i] - log(sum(exp(eta[riskset])))
+    }
+    return(loglik)
+}
+
 my.rpg <- function(z){
     omega <- rpg( num=1, h=1, z )
     return(omega)
@@ -308,7 +331,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
                 beta.tilde[i] <- beta.tilde[i] / sd1[ii]
                 beta.bar[i] <- beta.bar[i] / sd1[ii]
             }
-        }        
+        }
     }
     ret <- list( -l.gamma1, aic, w.aic, beta.tilde, beta.bar, lppd, p.waic )
 ######################################################################
@@ -520,7 +543,7 @@ fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.r
     return( fitted.models )
 }
 
-getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='waic' ){
+getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='aic', family=family ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     model.sizes <- size
     if( is.null(model.sizes) ){
@@ -571,16 +594,18 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
     I = 1
     if( family=='cox' )
         I = NULL
-    if( is.null(newx.fixed) )
-        pred <- as.matrix(cbind( I, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
-    else
-        pred <- as.matrix(cbind( I, newx.fixed, newx[,ptr1,drop=FALSE]) ) %*% best.fit.model
+    if( is.null(newx.fixed) ){
+        X <- as.matrix(cbind( I, newx[,ptr1,drop=FALSE]) )
+        pred <- X %*% best.fit.model
+    }else{
+        X <- as.matrix(cbind( I, newx.fixed, newx[,ptr1,drop=FALSE]) )
+        pred <- X %*% best.fit.model
+    }
 
     if( family=='binomial' ){
         pred <- 1 / ( 1 + exp(-pred) )
     }
-    if( family=='cox' )
-        pred = exp(pred)
+
     return(pred)
 }
 
@@ -674,13 +699,19 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         nfolds <- length(unique(foldid))
     }
     if( is.null(foldid) ){
-        foldid <- make.folds2( y, folds=nfolds )
+        yy <- y
+        if( family=="cox" )
+            yy <- y[,3]
+        if( family=="cox" | family=="binomial" )
+            foldid <- make.folds2( yy, folds=nfolds )
+        if( family=="gaussian" )
+            foldid <- make.folds.continuous( length(y), nfolds  )
     }
+    print( table( foldid ) )
 
     ll <- vector()
-    pred <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
-    pwll <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
-    cv.ll <- matrix(ncol=(k.max-k.min+1),nrow=nfolds)
+#    pred <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
+    pwll <- matrix( nrow=nfolds, ncol=(k.max-k.min+1) )
     if( verbose ){
         print(paste(nfolds,'fold cross-validation'))
     }
@@ -707,41 +738,35 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         }
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
-            pred[test,kk] <- predict.prems( my.fit,
-                                           newx=x[test,,drop=FALSE],
-                                           newx.fixed=x.fixed[test,,drop=FALSE],
-                                           size=k, family=family, criteria=criteria, fit=fit )
+            pred <- predict.prems( my.fit,
+                                  newx=x[test,,drop=FALSE],
+                                  newx.fixed=x.fixed[test,,drop=FALSE],
+                                  size=k, family=family, criteria=criteria, fit=fit )
+            if( family=='binomial' ){
+                lp1 <- log(pred)
+                lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
+                lp0 <- log(1-pred)
+                lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
+                pwll[i,kk] <- sum( y[test]*lp1 + (1-y[test])*lp0 )
+            }else if( family=='gaussian' ){
+                pwll[i,kk] <- sum ( -( y[test] - pred )^2 )
+            }else if( family=='cox' ){
+                pwll[i,kk] <- cox_pl_left_trunc( y[test], pred )
+            }
         }
         if( verbose ){
             print(paste('Fold',i,'complete.'))
         }
     }
-    for( k in k.min:k.max ){
-        kk <- k - k.min + 1
-        if( family=='binomial' ){
-            lp1 <- log(pred[,kk])
-            lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
-            lp0 <- log(1-pred[,kk])
-            lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
-            pwll[,kk] <- y*lp1 + (1-y)*lp0
-        }else if( family=='gaussian' ){
-            pwll[,kk] <- -(y-pred)^2
-        }
-        for( i in 1:nfolds ){
-            test <- which( foldid==i )
-            cv.ll[i,kk] <- mean(pwll[test,kk])
-        }
-    }
     cvm <- apply( pwll, 2, mean )
-    cvsd <- apply( cv.ll, 2, sd )/sqrt(nfolds)
+    cvsd <- apply( pwll, 2, sd )/sqrt(nfolds)
     names(cvm) <- k.min:k.max
     names(cvsd) <- k.min:k.max
-    colnames(pred) <- k.min:k.max
 
     sizes <- (k.min:k.max)[prems.optim( cvm, cvsd )]
 
-    ret <- list( sizes[1], sizes[2], cvm, cvsd, cv.ll )
-    names(ret) <- c('best','one.se','cvm','cvsd', 'cv.all' )
+    ret <- list( sizes[1], sizes[2], cvm, cvsd )
+    names(ret) <- c('best','one.se','cvm','cvsd' )
     return( ret )
 }
 
@@ -854,4 +879,20 @@ make.folds2 <- function( strata, folds ){
         which.fold[sample( ptr.ll, replace=FALSE )] <- fold
     }
     return(which.fold)
+}
+
+make.folds.continuous <- function( n, folds ) {
+  if (folds <= 0) stop("folds must be positive.")
+  if (n < 0) stop("n must be nonnegative.")
+
+  q <- n %/% folds
+  r <- n %% folds
+
+  counts <- rep(q, folds)
+  if (r > 0) {
+    counts[1:r] <- counts[1:r] + 1
+  }
+
+  x <- rep(seq_len(folds), times = counts)
+  sample(x)
 }
