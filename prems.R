@@ -6,22 +6,19 @@ library(gplots)
 library(MASS)
 library(exvatools)
 
-prune_by_r2_hclust <- function(X, auc_values, r2_threshold = 0.64, method = "average") {
+prune_by_r2_hclust <- function( cor_mat, auc_values, r2_threshold = 0.64, method = "average") {
 
-  if (!is.matrix(X)) {
+  if (!is.matrix(cor_mat)) {
     stop("X must be a numeric matrix (n × p).")
   }
 
-  if (length(auc_values) != ncol(X)) {
+  if (length(auc_values) != ncol(cor_mat)) {
     stop("Length of auc_values must equal number of columns in X.")
   }
 
   if (r2_threshold < 0 || r2_threshold > 1) {
     stop("r2_threshold must be between 0 and 1.")
   }
-
-  # --- Step 1: Correlation matrix ---
-  cor_mat <- cor(X, use = "pairwise.complete.obs")
 
   # Convert R² threshold to correlation threshold
   r_threshold <- sqrt(r2_threshold)
