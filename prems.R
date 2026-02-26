@@ -6,18 +6,14 @@ library(gplots)
 library(MASS)
 library(exvatools)
 
-prune_by_r2 <- function(cor_mat, r2_threshold) {
-  # --- Input checks ---
-  if (!is.matrix(cor_mat)) {
-    stop("cor_mat must be a matrix.")
-  }
+prune_by_r2_hclust <- function(cor_mat, r2_threshold,
+                               method = "average",
+                               representative = c("max_mean", "first")) {
 
-  if (nrow(cor_mat) != ncol(cor_mat)) {
-    stop("cor_mat must be square.")
-  }
+  representative <- match.arg(representative)
 
-  if (any(abs(diag(cor_mat) - 1) > 1e-8)) {
-    warning("Diagonal elements are not all 1.")
+  if (!is.matrix(cor_mat) || nrow(cor_mat) != ncol(cor_mat)) {
+    stop("cor_mat must be a square matrix.")
   }
 
   if (r2_threshold < 0 || r2_threshold > 1) {
@@ -26,48 +22,44 @@ prune_by_r2 <- function(cor_mat, r2_threshold) {
 
   # Convert R^2 threshold to correlation threshold
   r_threshold <- sqrt(r2_threshold)
+  cut_height <- 1 - r_threshold
 
-  # Work on absolute correlation
-  C <- abs(cor_mat)
+  # Distance matrix
+  dist_mat <- as.dist(1 - abs(cor_mat))
 
-  # Track which variables are still active
-  active <- rep(TRUE, nrow(C))
+  # Hierarchical clustering
+  hc <- hclust(dist_mat, method = method)
 
-  # Zero out diagonal to ignore self-correlation
-  diag(C) <- 0
+  # Cut tree
+  clusters <- cutree(hc, h = cut_height)
 
-  repeat {
-    # Submatrix of active variables
-    C_active <- C[active, active, drop = FALSE]
+  # Choose one representative per cluster
+  keep <- integer(0)
 
-    if (nrow(C_active) <= 1) break
+  for (cl in unique(clusters)) {
+    members <- which(clusters == cl)
 
-    max_corr <- max(C_active)
-
-    # Stop if below threshold
-    if (max_corr <= r_threshold) break
-
-    # Identify indices of most correlated pair
-    idx <- which(C_active == max_corr, arr.ind = TRUE)[1, ]
-
-    # Map back to original indices
-    active_indices <- which(active)
-    i <- active_indices[idx[1]]
-    j <- active_indices[idx[2]]
-
-    # Compute mean absolute correlation for both
-    mean_i <- mean(C[i, active])
-    mean_j <- mean(C[j, active])
-
-    # Remove the more redundant variable
-    if (mean_i >= mean_j) {
-      active[i] <- FALSE
+    if (length(members) == 1) {
+      keep <- c(keep, members)
     } else {
-      active[j] <- FALSE
+
+      if (representative == "first") {
+        keep <- c(keep, members[1])
+
+      } else if (representative == "max_mean") {
+        # Choose variable with highest mean absolute correlation within cluster
+        sub_cor <- abs(cor_mat[members, members, drop = FALSE])
+        mean_corr <- rowMeans(sub_cor)
+        keep <- c(keep, members[which.max(mean_corr)])
+      }
     }
   }
 
-  return(which(active))
+  return(list(
+    keep_indices = sort(keep),
+    clusters = clusters,
+    hclust_object = hc
+  ))
 }
 
 cox_pl_left_trunc <- function( Surv_obj, eta ) {
@@ -469,7 +461,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     }
     if( max2way!='all' ){
         ML <- unlist(mclapply( fitted.models[[1]], getElement, 'aic', mc.cores=no.cores ))
-        model.indicator[[2]] <- stepUP( model.indicator[[1]], Ncov, ML, max.s=max.s )
+        model.indicator[[2]] <- stepUP( model.indicator[[1]], Ncov, ML, max.s=max2way )
         if( verbose ){
             print( paste('Searching',nrow(model.indicator[[2]]),'2D models') )
         }
