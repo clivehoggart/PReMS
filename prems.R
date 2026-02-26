@@ -6,58 +6,55 @@ library(gplots)
 library(MASS)
 library(exvatools)
 
-prune_by_r2_hclust <- function(cor_mat, r2_threshold,
-                               method = "average",
-                               representative = c("max_mean", "first")) {
+prune_by_r2_hclust <- function(X, auc_values, r2_threshold = 0.64, method = "average") {
 
-  representative <- match.arg(representative)
+  if (!is.matrix(X)) {
+    stop("X must be a numeric matrix (n × p).")
+  }
 
-  if (!is.matrix(cor_mat) || nrow(cor_mat) != ncol(cor_mat)) {
-    stop("cor_mat must be a square matrix.")
+  if (length(auc_values) != ncol(X)) {
+    stop("Length of auc_values must equal number of columns in X.")
   }
 
   if (r2_threshold < 0 || r2_threshold > 1) {
     stop("r2_threshold must be between 0 and 1.")
   }
 
-  # Convert R^2 threshold to correlation threshold
-  r_threshold <- sqrt(r2_threshold)
-  cut_height <- 1 - r_threshold
+  # --- Step 1: Correlation matrix ---
+  cor_mat <- cor(X, use = "pairwise.complete.obs")
 
-  # Distance matrix
+  # Convert R² threshold to correlation threshold
+  r_threshold <- sqrt(r2_threshold)
+  cut_height  <- 1 - r_threshold
+
+  # Distance based on absolute correlation
   dist_mat <- as.dist(1 - abs(cor_mat))
 
-  # Hierarchical clustering
   hc <- hclust(dist_mat, method = method)
-
-  # Cut tree
   clusters <- cutree(hc, h = cut_height)
 
-  # Choose one representative per cluster
+  # --- Step 2: Select highest AUC per cluster ---
+
   keep <- integer(0)
+  cluster_representative <- list()
 
   for (cl in unique(clusters)) {
     members <- which(clusters == cl)
 
     if (length(members) == 1) {
       keep <- c(keep, members)
+      cluster_representative[[as.character(cl)]] <- members
     } else {
-
-      if (representative == "first") {
-        keep <- c(keep, members[1])
-
-      } else if (representative == "max_mean") {
-        # Choose variable with highest mean absolute correlation within cluster
-        sub_cor <- abs(cor_mat[members, members, drop = FALSE])
-        mean_corr <- rowMeans(sub_cor)
-        keep <- c(keep, members[which.max(mean_corr)])
-      }
+      best <- members[which.max(auc_values[members])]
+      keep <- c(keep, best)
+      cluster_representative[[as.character(cl)]] <- best
     }
   }
 
   return(list(
     keep_indices = sort(keep),
     clusters = clusters,
+    representatives = cluster_representative,
     hclust_object = hc
   ))
 }
@@ -294,13 +291,15 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
 
     if( family=='cox' ){
         if( k1==0 & k2==0 ){
-            fit <- coxph( y ~ 1 )
+            fit <- coxph( y ~ 1, model = FALSE, x = FALSE, y = FALSE )
         }else if( k1==0 & k2!=0 ){
-            fit <- coxph( y ~ x.fixed )
+            fit <- coxph( y ~ x.fixed, model = FALSE, x = FALSE, y = FALSE )
         }else if( k1!=0 & k2==0 ){
-            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE ) )
+            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE ),
+                         model = FALSE, x = FALSE, y = FALSE )
         }else{
-            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ) )
+            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ),
+                         model = FALSE, x = FALSE, y = FALSE )
         }
         beta.tilde <- fit$coef
         l.gamma1 <- fit$loglik[2]
@@ -634,7 +633,9 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     return(model.fit)
 }
 
-predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1, no.cores=10, criteria='waic', fit='mean', family='binomial' ){
+predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1, family='binomial',
+                          no.cores=10,
+                          criteria='aic', fit='mode' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
     if( fit=='mode' ){
