@@ -7,77 +7,65 @@ library(MASS)
 library(exvatools)
 library(igraph)
 
-select_proteins <- function(cor_matrix, association_scores, r2_threshold = 0.5) {
-  # 1. Convert Correlation to R2
-  r2_matrix <- cor_matrix^2
-  protein_names <- colnames(cor_matrix)
+select_proteins <- function(cor_mat, auc_values, r2_threshold = 0.64) {
 
-  # 2. Graph-Based Clustering (Louvain)
-  adj <- r2_matrix
-  adj[adj < 0.1] <- 0
-  diag(adj) <- 0
+  if (!requireNamespace("igraph", quietly = TRUE)) {
+    stop("Package 'igraph' is required.")
+  }
 
-  g <- graph_from_adjacency_matrix(adj, mode = "undirected", weighted = TRUE)
-  clusters <- cluster_louvain(g)
+  if (!is.matrix(cor_mat) || nrow(cor_mat) != ncol(cor_mat)) {
+    stop("cor_mat must be a square correlation matrix.")
+  }
 
-  # Map every protein to its Louvain Community
-  protein_meta <- data.frame(
-    protein = protein_names,
-    community = as.numeric(clusters$membership),
-    score = association_scores[protein_names],
-    stringsAsFactors = FALSE
+  p <- ncol(cor_mat)
+
+  if (length(auc_values) != p) {
+    stop("Length of auc_values must match cor_mat dimensions.")
+  }
+
+  if (r2_threshold < 0 || r2_threshold > 1) {
+    stop("r2_threshold must be between 0 and 1.")
+  }
+
+  # --- Construct adjacency matrix ---
+  r2_mat <- cor_mat^2
+
+  adj_mat <- r2_mat >= r2_threshold
+  diag(adj_mat) <- FALSE
+
+  # --- Build graph ---
+  g <- igraph::graph_from_adjacency_matrix(
+    adj_mat,
+    mode = "undirected",
+    diag = FALSE
   )
 
-  # 3. Greedy Selection Logic
-  ranked_proteins <- protein_meta[order(-protein_meta$score), ]
-  selected_p <- c()
-  used_comms <- c()
+  comps <- igraph::components(g)
+  membership <- comps$membership
 
-  # Prepare a mapping: Protein -> Selected Representative
-  mapping <- setNames(rep(NA, length(protein_names)), protein_names)
+  # --- Select highest AUC per component ---
+  keep <- integer(0)
+  representatives <- list()
 
-  for (i in 1:nrow(ranked_proteins)) {
-    curr_p <- ranked_proteins$protein[i]
-    curr_comm <- ranked_proteins$community[i]
+  for (cid in unique(membership)) {
+    members <- which(membership == cid)
 
-    # Check if community is already 'represented'
-    # OR if it violates the R2 threshold against already selected ones
-    if (curr_comm %in% used_comms) {
-      next
-    }
-
-    if (length(selected_p) > 0) {
-      if (any(r2_matrix[curr_p, selected_p] >= r2_threshold)) next
-    }
-
-    # If it passes, it becomes a representative
-    selected_p <- c(selected_p, curr_p)
-    used_comms <- c(used_comms, curr_comm)
-  }
-
-  # 4. Assignment Step: Map 'removed' proteins to their best 'selected' representative
-  # For every protein, find which 'selected' protein it is most correlated with
-  for (p in protein_names) {
-    # If p is a selected protein, it maps to itself
-    if (p %in% selected_p) {
-      mapping[p] <- p
+    if (length(members) == 1) {
+      best <- members
     } else {
-      # Find the selected protein with the highest R2 to this protein
-      cor_with_selected <- r2_matrix[p, selected_p]
-      best_rep <- selected_p[which.max(cor_with_selected)]
-      mapping[p] <- best_rep
+      best <- members[which.max(auc_values[members])]
     }
+
+    keep <- c(keep, best)
+    representatives[[as.character(cid)]] <- best
   }
 
-  return(list(
-    selected = selected_p,
-    assignments = data.frame(
-      protein = names(mapping),
-      representative = as.character(mapping),
-      community = protein_meta$community[match(names(mapping), protein_meta$protein)],
-      individual_score = protein_meta$score[match(names(mapping), protein_meta$protein)]
-    )
-  ))
+  list(
+    keep_indices = sort(keep),
+    components = membership,
+    representatives = representatives,
+    graph = g
+  )
 }
 
 cox_pl_left_trunc <- function( Surv_obj, eta ) {
