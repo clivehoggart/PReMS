@@ -170,8 +170,8 @@ getEta <- function( y, x, beta ){
 
 stepUP <- function( old.modelS, P, old.ml, max.s=10 ){
   s <- order( old.ml, decreasing=FALSE )
-  new.modelS <- expand.model( old.modelS[s[1],], P )
-  for( k in 2:max.s ){
+#  new.modelS <- expand.model( old.modelS[s[1],], P )
+  for( k in 1:max.s ){
     new.modelS <- rbind( new.modelS, expand.model( old.modelS[s[k],], P ) )
   }
   new.modelS <- unique(new.modelS)
