@@ -7,6 +7,33 @@ library(MASS)
 library(exvatools)
 library(igraph)
 
+find_outliers_sd <- function(X, threshold = 3, na.rm = TRUE) {
+  if (!is.matrix(X) && !is.data.frame(X)) {
+    stop("X must be a matrix or data.frame")
+  }
+
+  X <- as.matrix(X)
+
+  # compute z-scores columnwise
+  Z <- scale(X, center = TRUE, scale = TRUE)
+
+  # identify outliers
+  outlier_matrix <- abs(Z) > threshold
+
+  # indices of outlying entries
+  outlier_indices <- which(outlier_matrix, arr.ind = TRUE)
+
+  # corresponding values
+  outlier_values <- X[outlier_matrix]
+
+  list(
+    outlier_matrix = outlier_matrix,
+    outlier_indices = outlier_indices,
+    outlier_values = outlier_values,
+    z_scores = Z
+  )
+}
+
 select_proteins <- function(cor_mat, auc_values, r2_threshold = 0.64) {
 
   if (!requireNamespace("igraph", quietly = TRUE)) {
