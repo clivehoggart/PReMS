@@ -328,14 +328,14 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
 
     if( family=='cox' ){
         if( k1==0 & k2==0 ){
-            fit <- coxph( y ~ 1, model = FALSE, x = FALSE, y = FALSE )
+            fit <- coxph( y ~ 1, model = FALSE, x = FALSE, y = FALSE, ties="breslow" )
         }else if( k1==0 & k2!=0 ){
-            fit <- coxph( y ~ x.fixed, model = FALSE, x = FALSE, y = FALSE )
+            fit <- coxph( y ~ x.fixed, model = FALSE, x = FALSE, y = FALSE, ties="breslow" )
         }else if( k1!=0 & k2==0 ){
-            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE ),
+            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE, ties="breslow" ),
                          model = FALSE, x = FALSE, y = FALSE )
         }else{
-            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ),
+            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE, ties="breslow" ),
                          model = FALSE, x = FALSE, y = FALSE )
         }
         beta.tilde <- fit$coef
