@@ -635,7 +635,7 @@ fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.r
     return( fitted.models )
 }
 
-getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='aic', family=family ){
+getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='aic' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     model.sizes <- size
     if( is.null(model.sizes) ){
@@ -655,9 +655,9 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
     for( i in 1:length(ptr) ){
         model.fit[[i]] <- fitted.models$fitted.models[[size]][[ptr[i]]]
-        if( family=='binomial' | family=='gaussian' ){
+        if( fitted.models$family=='binomial' | fitted.models$family=='gaussian' ){
             nmes <- c( 'I', fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
-        }else if( family=='cox' ){
+        }else if( fitted.models$family=='cox' ){
             nmes <- c( fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
         }
         names(model.fit[[i]]$beta) <- nmes
@@ -670,7 +670,7 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     return(model.fit)
 }
 
-predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1, family='binomial',
+predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1,
                           no.cores=10,
                           criteria='aic', fit='mode' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
@@ -686,7 +686,7 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
     ptr1 <- match( fitted.models$cnames[ptr.covs.use[ptr]], colnames(newx) )
 
     I = 1
-    if( family=='cox' )
+    if( fitted.models$family=='cox' )
         I = NULL
     if( is.null(newx.fixed) ){
         X <- as.matrix(cbind( I, newx[,ptr1,drop=FALSE]) )
@@ -696,7 +696,7 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
         pred <- X %*% best.fit.model
     }
 
-    if( family=='binomial' ){
+    if( fitted.models$family=='binomial' ){
         pred <- 1 / ( 1 + exp(-pred) )
     }
 
