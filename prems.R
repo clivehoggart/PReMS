@@ -671,9 +671,27 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
     return(model.fit)
 }
 
+thin.prems <- function( fit, size, rank ){
+    fitted.models <- list()
+    model.indicator <- list()
+    for( i in 1:size ){
+        s <- order( unlist(sapply( fit$fitted.models[[i]], getElement, 'aic' ) ))
+        fitted.models[[i]] <- list()
+        model.indicator[[i]] <- list()
+        for( j in 1:rank ){
+            fitted.models[[i]][[j]] <- fit$fitted.models[[i]][[s[j]]]
+            model.indicator[[i]] <- fit$model.indicator[[i]][ s[j], , drop=FALSE ]
+        }
+    }
+    ret <- list( fit$null, fitted.models, model.indicator, fit$cnames.fixed, fit$cnames,
+                fit$m, fit$sd, fit$m.fixed, fit$sd.fixed, fit$tau, fit$standardize, fit$family )
+    names(ret) <- c('null','fitted.models','model.indicator', 'cnames.fixed', 'cnames',
+                    'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family' )
+    return( ret )
+}
+
 predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1,
-                          no.cores=10,
-                          criteria='aic', fit='mode' ){
+                          no.cores=10, criteria='aic', fit='mode' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
     if( fit=='mode' ){
@@ -704,7 +722,8 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
     return(pred)
 }
 
-predict.prems.bayes <- function( fitted.models, newx, y.train, x.train, size=NULL, rank=1, iter=10000, no.cores=10, criteria='waic' ){
+predict.prems.bayes <- function( fitted.models, newx, y.train, x.train,
+                                size=NULL, rank=1, iter=10000, no.cores=10, criteria='waic' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     for( i in 1:ncol(x.train) ){
         newx[,i] <- (newx[,i]-fitted.models$m[i]) / fitted.models$sd[i]
