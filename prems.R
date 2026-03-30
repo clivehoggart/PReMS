@@ -158,11 +158,12 @@ plot.cv.prems <- function( cv.fit, ylim=NULL, cex=1 ){
 }
 
 getCoefGlmnet <- function( fit, s="lambda.min" ){
-    tmp2 <- coef( fit, s=s )
+    if( s=="lambda.min" )
+        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.min ) ]
+    if( s=="lambda.1se" )
+        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.1se ) ]
     ptr <- which( tmp2!=0 )
-    tmp <- tmp2[ptr]
-    names(tmp) <- rownames(tmp2)[ptr]
-    beta <- tmp[-1]
+    beta <- tmp2[ptr]
     return(beta)
 }
 
@@ -932,7 +933,11 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
                      parallel=parallel )
     }
 
-    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:(1+ncol(x.fixed)))]
+    if( family=='cox' )
+        ncol.fixed <- ncol(x.fixed)
+    else
+        ncol.fixed <- 1 + ncol(x.fixed)
+    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:ncol.fixed)]
     if( length(beta) > 0 ){
         s <- rep(1,ncol(x))
         if( standardize ){
@@ -948,7 +953,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
         tau.opt <- NA
     }
 
-    beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:(1+ncol(x.fixed)))]
+    beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:ncol.fixed)]
     if( length(beta) > 0 ){
         s <- rep(1,length(beta))
         if( standardize ){
