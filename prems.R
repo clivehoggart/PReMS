@@ -160,8 +160,10 @@ plot.cv.prems <- function( cv.fit, ylim=NULL, cex=1 ){
 getCoefGlmnet <- function( fit, s="lambda.min" ){
     if( s=="lambda.min" )
         tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.min ) ]
-    if( s=="lambda.1se" )
+    else if( s=="lambda.1se" )
         tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.1se ) ]
+    else
+        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==s ) ]
     ptr <- which( tmp2!=0 )
     beta <- tmp2[ptr]
     return(beta)
