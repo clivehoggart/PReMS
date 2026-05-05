@@ -858,7 +858,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             pred <- predict.prems( my.fit,
                                   newx=x[test,,drop=FALSE],
                                   newx.fixed=x.fixed[test,,drop=FALSE],
-                                  size=k, family=family, criteria=criteria, fit=fit )
+                                  size=k, criteria=criteria, fit=fit )
             if( family=='binomial' ){
                 lp1 <- log(pred)
                 lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
