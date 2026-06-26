@@ -440,11 +440,10 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
             beta.tilde <- tmp$par
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
             logPost <- -tmp$value
-            hess <- getHessian2( x1, beta.tilde, tau1 )
-        ###########################
-        # Recording log-posterior #
-        ###########################
-            l.gamma1 <- logPost# - 0.5*log(det(hess))
+#            hess <- getHessian2( x1, beta.tilde, tau1 )
+#            l.gamma1 <- logPost - 0.5*log(det(hess))
+            logdetH <- getHessian_gpt( x1, beta.tilde, tau1 )
+            l.gamma1 <- logPost - 0.5 * logdetH
         }else{
             fit = fit_logit_newton_laplace( y=yy, x=x1, tau-tau1 )
             beta.tilde = fit$beta_hat
