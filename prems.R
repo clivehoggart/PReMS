@@ -448,9 +448,8 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
         }else{
             fit = fit_logit_newton_laplace( y=yy, x=x1, tau-tau1 )
             beta.tilde = fit$beta_hat
-            l.gamma1 <- fit$og_ml_laplace
+            l.gamma1 <- fit$log_ml_laplace
         }
-
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
     }
