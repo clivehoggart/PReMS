@@ -7,6 +7,115 @@ library(MASS)
 library(exvatools)
 library(igraph)
 
+fit_logit_newton_laplace <- function(y, x, tau,
+                                     maxit = 50,
+                                     tol = 1e-8) {
+
+  y <- as.numeric(y)
+  x <- as.matrix(x)
+  tau <- as.numeric(tau)
+
+  if (!all(y %in% c(-1, 1))) {
+    stop("This function assumes y is coded -1/+1.")
+  }
+
+  n <- length(y)
+  k <- ncol(x)
+
+  log_sigmoid <- function(eta) {
+    ifelse(
+      eta >= 0,
+      -log1p(exp(-eta)),
+      eta - log1p(exp(eta))
+    )
+  }
+
+  logpost <- function(beta) {
+    eta <- y * as.numeric(x %*% beta)
+
+    loglike <- sum(log_sigmoid(eta))
+
+    pen.idx <- tau > 0
+
+    logprior <- 0.5 * sum(log(tau[pen.idx])) -
+      0.5 * sum(tau[pen.idx] * beta[pen.idx]^2)
+
+    loglike + logprior
+  }
+
+  ## intercept-only initial value if first column is intercept
+  p0 <- mean(y == 1)
+  p0 <- min(max(p0, 1e-6), 1 - 1e-6)
+
+  beta <- rep(0, k)
+  beta[1] <- qlogis(p0)
+
+  lp <- logpost(beta)
+
+  for (iter in seq_len(maxit)) {
+    eta <- y * as.numeric(x %*% beta)
+
+    score <- as.numeric(crossprod(x, y * plogis(-eta))) - tau * beta
+
+    w <- plogis(eta) * plogis(-eta)
+
+    H <- crossprod(x, x * w) + diag(tau, k)
+
+    cholH <- tryCatch(chol(H), error = function(e) NULL)
+    if (is.null(cholH)) {
+      stop("Hessian not positive definite. Check rank, separation or unpenalised covariates.")
+    }
+
+    step <- as.numeric(
+      backsolve(cholH, forwardsolve(t(cholH), score))
+    )
+
+    ## step-halving for monotone ascent
+    step.factor <- 1
+    repeat {
+      beta.new <- beta + step.factor * step
+      lp.new <- logpost(beta.new)
+
+      if (is.finite(lp.new) && lp.new >= lp - 1e-10) break
+
+      step.factor <- step.factor / 2
+
+      if (step.factor < 1e-8) {
+        beta.new <- beta
+        lp.new <- lp
+        break
+      }
+    }
+
+    beta <- beta.new
+
+    if (max(abs(step.factor * step)) < tol) break
+
+    lp <- lp.new
+  }
+
+  eta <- y * as.numeric(x %*% beta)
+  w <- plogis(eta) * plogis(-eta)
+
+  H <- crossprod(x, x * w) + diag(tau, k)
+
+  cholH <- chol(H)
+  logdetH <- 2 * sum(log(diag(cholH)))
+
+  logpost.hat <- logpost(beta)
+
+  log.ml.laplace <- logpost.hat - 0.5 * logdetH
+
+  list(
+    beta_hat = beta,
+    logpost_hat = logpost.hat,
+    log_ml_laplace = log.ml.laplace,
+    logdetH = logdetH,
+    iterations = iter,
+    converged = iter < maxit
+  )
+}
+
 find_outliers_sd <- function(X, threshold = 3, na.rm = TRUE) {
   if (!is.matrix(X) && !is.data.frame(X)) {
     stop("X must be a matrix or data.frame")
@@ -236,6 +345,19 @@ getAll2Way <- function(n){
   return(models22)
 }
 
+getHessian_gpt <- function( x, beta, tau ){# In matrix notation
+    eta <- as.numeric(x %*% beta)
+    mu <- 1 / ( 1 + exp(-eta) )
+
+    omega <- pmax(mu * (1 - mu), 1e-12)
+    H <- crossprod(x, x * omega) + diag(tau,nrow=length(tau))
+    
+    cholH <- chol(H)
+    logdetH <- 2 * sum(log(diag(cholH)))
+
+    return(logdetH)
+}
+
 getHessian2 <- function( x, beta, tau ){# In matrix notation
   eta <- x %*% beta
   theta <- 1 / ( 1 + exp(-eta) )
@@ -254,12 +376,8 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood.clean <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, m.fixed, sd.fixed, n.waic=0, burn=10 ){
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='gaussian', m1, sd1, m.fixed, sd.fixed, m.y, s.y, n.waic=0, burn=10 ){
     n <- length(y)
-    x1 <- cbind( rep(1,n), x.fixed, x.select )
-    k <- ncol(x1) # total covs + intercept
-    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
-    k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
     w.aic <- NA
     lppd <- NA
     p.waic <- NA
@@ -268,64 +386,12 @@ getMargLikelihood.clean <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delt
     dic <- NA
     beta.bar <- NA
 
-    if( is.null(beta.tilde0) ){
-        beta.tilde0 <- rep(0,k)
-    }
-
-    if( family=='cox' ){
-        fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ) )
-        beta.tilde <- fit$coef
-        l.gamma1 <- fit$loglik[2]
-    }
     if( family=='gaussian' | family=='binomial' ){
-        fit <- glm( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ), family=family )
-        beta.tilde <- fit$coef
-        l.gamma1 <- -fit$deviance / 2
-        aic <- fit$aic
-    }
-    if( k2>0 ){
-        for( ii in 1:k2 ){
-            i <- ii + 1
-            beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
-            beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
-            beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
-            beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
-        }
-    }
-    if( k1>0 ){
-        for( ii in 1:k1 ){
-            i <- ii + k2 + 1
-            beta.tilde[i] <- beta.tilde[i] / sd1[ii]
-            beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
-            beta.bar[i] <- beta.bar[i] / sd1[ii]
-            beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
-        }
-    }
-    ret <- list( -l.gamma1, aic, w.aic, beta.tilde, beta.bar, lppd, p.waic )
-######################################################################
-# Returning MINUS log-posterior to be consistent with other measures #
-# of model fit, ie ICs, which are minimised for best fit             #
-######################################################################
-    names(ret) <- c( 'ML', 'aic', 'waic', 'beta', 'beta.bar', 'lppd', 'p.waic' )
-    return( ret )
-}
-
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, family='gaussian', beta.tilde0=NULL, m1, sd1, m.fixed, sd.fixed, n.waic=0, burn=10 ){
-    n <- length(y)
-    x1 <- cbind( rep(1,n), x.fixed, x.select )
-    k <- ncol(x1) # total covs + intercept
-    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
-    k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
-    w.aic <- NA
-    lppd <- NA
-    p.waic <- NA
-    p.waic2 <- NA
-    p.anna <- NA
-    dic <- NA
-    beta.bar <- NA
-
-    if( is.null(beta.tilde0) ){
-        beta.tilde0 <- rep(0,k)
+        x1 <- cbind( rep(1,n), x.fixed, x.select )
+        k <- ncol(x1) # total covs + intercept
+        k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
+        k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
+        tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
     }
 
     if( family=='cox' ){
@@ -345,53 +411,46 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
         aic = -2*fit$loglik[2] + 2*length(beta.tilde)
     }
     if( family=='gaussian' ){
-        norm.const <- sd(y)
-        y <- y/norm.const
-        y.y <- sum(y*y)
+        penalty <- diag(c(rep(0, k2+1), rep(tau, k1)), k)
+        A <- penalty + crossprod( x1, x1 )
+        b = crossprod( x1, y )
 
-        M1 <- diag(tau,nrow=ncol(x1)) + t(x1) %*% x1
-        Inv.M1 <- solve(M1)
-        q1 <- y.y - (t(y) %*% x1 %*% Inv.M1 %*% t(x1) %*% y)
-
-        l.gamma1 <- lgamma( 0.5*(n+delta+k1) ) - (n-k1)*log(tau)/2 - (n+delta+k1)*log(1+q1/tau)/2 - lgamma(0.5*(delta+k1)) - 0.5*log(det(M1))
-        beta.tilde <- (Inv.M1 %*% t(x1) %*% y) * norm.const
-        aic <- 2* (sum(y - x1 %*% beta.tilde)^2 + length(beta.tilde) - 1)
-        if(n.waic!=0){
-            S <- t(y - x1 %*% beta.tilde) %*% y
-            post.samples <- rmvt( delta=beta.tilde, sigma=S, type="shifted" )
-        }
+        cholA <- chol(A)
+        logdetA <- 2 * sum(log(diag(cholA)))
+        Ainv_b <- backsolve(cholA, forwardsolve(t(cholA), b))
+        S.tau <- as.numeric((n - 1) - crossprod(b, Ainv_b))
+        q <- k2 + 1
+        a.n <- 1 + (n - q) / 2
+        l.gamma1 <- -a.n * log(1 + S.tau / 2) - 0.5 * logdetA
+        
+        beta.tilde <- as.numeric(Ainv_b)
+        rss <- sum((y - as.numeric(x1 %*% beta.tilde))^2)
+        df <- length(beta.tilde) - 1
+        aic <- n * log(rss / n) + 2 * df
+        beta.tilde <- beta.tilde * s.y
+        beta.tilde[1] = beta.tilde[1] + m.y
     }
     if( family=='binomial' ){
-        tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
         yy <- 2*y-1
-        tmp <- optim( beta.tilde0, fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
-        beta.tilde <- tmp$par
 
+        if( !gpt ){
+            tmp <- optim( rep(0,k), fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
+            beta.tilde <- tmp$par
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
-        logPost <- -tmp$value
-#        hess <- getHessian2( x1, beta.tilde, tau1 )
+            logPost <- -tmp$value
+            hess <- getHessian2( x1, beta.tilde, tau1 )
         ###########################
         # Recording log-posterior #
         ###########################
-        l.gamma1 <- logPost# - 0.5*log(det(hess))
+            l.gamma1 <- logPost# - 0.5*log(det(hess))
+        }else{
+            fit = fit_logit_newton_laplace( y=yy, x=x1, tau-tau1 )
+            beta.tilde = fit$beta_hat
+            l.gamma1 <- fit$og_ml_laplace
+        }
 
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
-        if(n.waic!=0){
-            beta.post <- Bayes_logit( y=y, X=x1, m0=rep(0,k), P0=diag(tau1,k), samp=n.waic, burn=burn )
-#            beta.post <- post.samples$beta
-            ll <- matrix( ncol=n, nrow=n.waic )
-            for( i in 1:n.waic ){
-                eta <- getEta( yy, x1, beta.post[i,] )
-                ll[i,] <- 1/(1 + exp(-eta))
-            }
-            lppd <- sum(log(apply( ll, 2, mean )))
-            p.waic <- sum(apply( log(ll), 2, var ))
-#            p.waic2 <- 2 * sum( log(apply( ll, 2, mean )) - apply( log(ll), 2,  mean ) )
-            w.aic <- -lppd + p.waic
-
-            beta.bar <- apply( beta.post, 2, mean )
-        }
     }
     if( family=='binomial' | family=='gaussian' ){
         if( k2>0 ){
@@ -439,7 +498,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, delta=1, 
 ############# Public functions below #############
 
 prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
-                  family='gaussian', tau=1, delta=1, max.s=10, no.cores=10,
+                  family='gaussian', tau=1, max.s=10, no.cores=10,
                   standardize=TRUE, verbose=TRUE ){
     model.indicator <- list()
     fitted.models <- list()
@@ -464,6 +523,14 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         m.fixed <- vector(length=0)
         s.fixed <- vector(length=0)
     }
+    if( family=='gaussian' ){
+        m.y <- mean(y)
+        s.y <- sd(y)
+        y <- ( y - m.y ) / s.y
+    }else{
+        m.y <- NULL
+        s.y <- NULL
+    }
 
     ptr.covs.use <- which( s1!=0 )
     if( length(ptr.covs.use) != ncol(x) & verbose ){
@@ -471,10 +538,11 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     }
     Ncov <- length(ptr.covs.use)
 
-    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau, delta=delta,
+    null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau,
                                m1=vector(length=0), sd1=vector(length=0),
                                m.fixed=m.fixed, sd.fixed=s.fixed,
-                               n.waic=0, burn=10 )
+                               n.waic=0, burn=10,
+                               m.y=m.y, s.y=s.y )
 
     model.indicator[[1]] <- cbind(1:Ncov)
     if( verbose ){
@@ -482,10 +550,11 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     }
 
     fitted.models[[1]] <- mclapply(1:Ncov, function(ptr)
-    {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed,
-                        y=y, family=family, tau=tau, delta=delta,
+    {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed, y=y,
+                        family=family, tau=tau,
                         m1=m1[ptr.covs.use[ptr]], sd1=s1[ptr.covs.use[ptr]],
-                        m.fixed=m.fixed, sd.fixed=s.fixed )},
+                        m.fixed=m.fixed, sd.fixed=s.fixed,
+                        m.y=m.y, s.y=s.y )},
     mc.cores=no.cores)
     if( verbose ){
         print("Finished 1D models")
@@ -498,7 +567,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         }
     }
     if( max2way!='all' ){
-        ML <- unlist(mclapply( fitted.models[[1]], getElement, 'aic', mc.cores=no.cores ))
+        ML <- unlist(mclapply( fitted.models[[1]], getElement, 'ML', mc.cores=no.cores ))
         model.indicator[[2]] <- stepUP( model.indicator[[1]], Ncov, ML, max.s=max2way )
         if( verbose ){
             print( paste('Searching',nrow(model.indicator[[2]]),'2D models') )
@@ -506,16 +575,16 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     }
     k <- 2
     fitted.models[[k]] <- mclapply( 1:nrow(model.indicator[[k]]), function(i)
-    {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]],
-                        x.fixed=x.fixed, y=y,
-                        family=family, tau=tau, delta=delta,
+    {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]], x.fixed=x.fixed, y=y,
+                        family=family, tau=tau,
                         m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
                         sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
-                        m.fixed=m.fixed, sd.fixed=s.fixed )}, mc.cores=no.cores)
+                        m.fixed=m.fixed, sd.fixed=s.fixed,
+                        m.y=m.y, s.y=s.y )}, mc.cores=no.cores)
     if( verbose ){
         print("Finished 2D models")
     }
-    ML <- unlist(mclapply( fitted.models[[2]], getElement, 'aic', mc.cores=no.cores ))
+    ML <- unlist(mclapply( fitted.models[[2]], getElement, 'ML', mc.cores=no.cores ))
 
     s <- order( ML, decreasing=FALSE )
     tmp.fits <- list()
@@ -539,15 +608,16 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
             fitted.models[[k]] <- mclapply(1:nrow(model.indicator[[k]]), function(i)
             {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]],
                                 x.fixed=x.fixed, y=y,
-                                family=family, tau=tau, delta=delta,
+                                family=family, tau=tau,
                                 m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
                                 sd1=s1[ptr.covs.use[model.indicator[[k]][i,]]],
-                                m.fixed=m.fixed, sd.fixed=s.fixed )},
+                                m.fixed=m.fixed, sd.fixed=s.fixed,
+                                m.y=m.y, s.y=s.y )},
             mc.cores=no.cores)
             if( verbose ){
                 print( paste('Finished ',k,'D models',sep='') )
             }
-            ML <- unlist(mclapply( fitted.models[[k]], getElement, 'aic', mc.cores=no.cores ))
+            ML <- unlist(mclapply( fitted.models[[k]], getElement, 'ML', mc.cores=no.cores ))
 
             s <- order( ML, decreasing=FALSE )
             tmp.fits <- list()
@@ -580,6 +650,14 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10,
         x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
         x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
     }
+    if( fitted.models$family=='gaussian' ){
+        m.y <- mean(y)
+        s.y <- sd(y)
+        yy <- ( y - m.y ) / s.y
+    }else{
+        m.y <- NULL
+        s.y <- NULL
+    }
 
     k <- length(fitted.models$fitted.models)
     ptr.covs.use <- which( fitted.models$sd!=0 )
@@ -593,10 +671,11 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10,
     {getMargLikelihood2( x.select=x[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
                         x.fixed=x.fixed,
                         y=y, family=fitted.models$family,
-                        tau=fitted.models$tau, delta=fitted.models$delta,
+                        tau=fitted.models$tau,
                         m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
                         sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed )},
+                        m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed,
+                        m.y=m.y, s.y=s.y )},
     mc.cores=no.cores)
     return(fitted.models)
 }
@@ -608,6 +687,14 @@ fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.r
     if( !is.null(x.fixed) ){
         x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
         x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
+    }
+    if( fitted.models$family=='gaussian' ){
+        m.y <- mean(y)
+        s.y <- sd(y)
+        yy <- ( y - m.y ) / s.y
+    }else{
+        m.y <- NULL
+        s.y <- NULL
     }
 
     ptr.covs.use <- which( fitted.models$sd!=0 )
@@ -625,7 +712,8 @@ fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.r
                                           m1=fitted.models$m[ptr.covs.use[ptr[ii,]]],
                                           sd1=fitted.models$sd[ptr.covs.use[ptr[ii,]]],
                                           m.fixed=fitted.models$m.fixed,
-                                          sd.fixed=fitted.models$sd.fixed )},
+                                          sd.fixed=fitted.models$sd.fixed,
+                                          m.y=m.y, s.y=s.y )},
                          mc.cores=no.cores )
         for( i in 1:n.rank ){
             fitted.models$fitted.models[[size]][[s[i]]] <- tmp[[i]]
@@ -856,7 +944,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             pred <- predict.prems( my.fit,
                                   newx=x[test,,drop=FALSE],
                                   newx.fixed=x.fixed[test,,drop=FALSE],
-                                  size=k, family=family, criteria=criteria, fit=fit )
+                                  size=k, criteria=criteria, fit=fit )
             if( family=='binomial' ){
                 lp1 <- log(pred)
                 lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
@@ -978,7 +1066,7 @@ my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='aic' ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
-        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria, fit='mode', family='binomial' )
+        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria, fit='mode' )
     }
 #    r <- matrix(ncol=3,nrow=length(sizes))
     r <- list()
