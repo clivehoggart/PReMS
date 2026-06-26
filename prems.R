@@ -378,7 +378,7 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='gaussian', m1, sd1, m.fixed, sd.fixed, m.y, s.y, n.waic=0, burn=10 ){
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='gaussian', m1, sd1, m.fixed, sd.fixed, m.y, s.y, n.waic=0, burn=10, gpt=TRUE ){
     n <- length(y)
     w.aic <- NA
     lppd <- NA
