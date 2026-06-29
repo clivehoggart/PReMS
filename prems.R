@@ -725,7 +725,7 @@ fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.r
     return( fitted.models )
 }
 
-getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='aic' ){
+getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='ML' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     model.sizes <- size
     if( is.null(model.sizes) ){
@@ -780,7 +780,7 @@ thin.prems <- function( fit, size, rank ){
 }
 
 predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1,
-                          no.cores=10, criteria='aic', fit='mode' ){
+                          no.cores=10, criteria='ML', fit='mode' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
     best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
     if( fit=='mode' ){
@@ -893,7 +893,7 @@ prems.clean <- function( all.fits ){
 cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
                      max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
                      n.waic=100, n.coef=1, lasso.factor=1,
-                     criteria='aic', fit='mode', family='binomial', verbose=TRUE ){
+                     criteria='ML', fit='mode', family='binomial', verbose=TRUE ){
     if( is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(y)
         foldid <- 1:nfolds
@@ -1062,7 +1062,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
     return(ret)
 }
 
-my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='aic' ){
+my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='ML' ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
