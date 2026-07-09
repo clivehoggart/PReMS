@@ -918,6 +918,10 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
     if( verbose ){
         print(paste(nfolds,'fold cross-validation'))
     }
+    selected.coef <- vector("list", k.max )
+    for( k in k.min:k.max ){
+        selected.coef[[k]] = matrix( nrow=nfolds, ncol=k )
+    }
     for( i in 1:nfolds ){
         train <- which( foldid!=i )
         test <- which( foldid==i )
@@ -934,7 +938,6 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                         family=family, tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way,
                         no.cores=no.cores, verbose=FALSE )
-#        if( criteria=='waic' | fit=='mode' ){
         if( criteria=='waic'  | fit=='mean' ){
             my.fit <- fillICs( fitted.models=my.fit, y=y[train], x=x[train,],
                               n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
@@ -951,11 +954,15 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                 lp0 <- log(1-pred)
                 lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
                 pwll[i,kk] <- sum( y[test]*lp1 + (1-y[test])*lp0 )
+                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)[-1]
             }else if( family=='gaussian' ){
                 pwll[i,kk] <- sum ( -( y[test] - pred )^2 )
+                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)[-1]
             }else if( family=='cox' ){
                 pwll[i,kk] <- cox_pl_left_trunc( y[test], pred )
+                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)
             }
+
         }
         if( verbose ){
             print(paste('Fold',i,'complete.'))
@@ -968,8 +975,8 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
 
     sizes <- (k.min:k.max)[prems.optim( cvm, cvsd )]
 
-    ret <- list( sizes[1], sizes[2], cvm, cvsd )
-    names(ret) <- c('best','one.se','cvm','cvsd' )
+    ret <- list( sizes[1], sizes[2], cvm, cvsd, selected.coef )
+    names(ret) <- c('best','one.se','cvm','cvsd', 'selected.coef' )
     return( ret )
 }
 
