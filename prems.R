@@ -1085,15 +1085,54 @@ my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='ML' ){
     return(r)
 }
 
-make.folds2 <- function( strata, folds ){
-    which.fold <- rep(NA,length=sum(!is.na(strata)))
-    strata <- as.factor(strata)
-    for( ll in levels(strata) ){
-        ptr.ll <- which( strata==ll )
-        fold <- c( rep( 1:folds, times=floor(length(ptr.ll)/folds) ), sample( 1:folds, length(ptr.ll)%%folds) )
-        which.fold[sample( ptr.ll, replace=FALSE )] <- fold
+make.folds2 <- function(strata, folds=5, seed=NULL) {
+
+    if( !is.null(seed) ) set.seed(seed)
+
+    if( length(folds)!=1 || folds<2 || folds!=as.integer(folds) ){
+        stop("folds must be a single integer >= 2")
     }
-    return(which.fold)
+
+    if( any(is.na(strata)) ){
+        stop("strata contains missing values")
+    }
+
+    strata <- as.factor(strata)
+    n <- length(strata)
+
+    if( folds > n ){
+        stop("number of folds cannot exceed number of samples")
+    }
+
+    foldid <- rep(NA_integer_, n)
+
+    tab <- table(strata)
+    if( any(tab < folds) ){
+        warning("At least one stratum has fewer samples than folds; exact stratification is impossible")
+    }
+
+    ## Process smaller strata first, so rare strata are spread as evenly as possible
+    strata.levels <- names(sort(tab))
+
+    fold.counts <- rep(0, folds)
+
+    for( s in strata.levels ){
+
+        ptr <- which(strata==s)
+        ptr <- sample(ptr)
+
+        ## Prefer currently smaller folds, but randomise ties
+        fold.order <- order(fold.counts, runif(folds))
+
+        ## Repeat fold order until all samples in this stratum are assigned
+        assign.folds <- rep(fold.order, length.out=length(ptr))
+
+        foldid[ptr] <- assign.folds
+
+        fold.counts <- tabulate(foldid[!is.na(foldid)], nbins=folds)
+    }
+
+    return(foldid)
 }
 
 make.folds.continuous <- function( n, folds ) {
