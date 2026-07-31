@@ -930,7 +930,6 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             attempt <- 1
             max.attempts <- 20
             while ( attempt <= max.attempts ) {
-                set.seed( opt$rep * 1000 + i * 100 + attempt )
                 tauest.try <- try(
                     TauEst( y = y.train, x = x.train[, clust$keep_indices, drop=FALSE ],
                            family = 'binomial', nfolds = 10, parallel = TRUE ),
