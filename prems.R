@@ -926,9 +926,24 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         train <- which( foldid!=i )
         test <- which( foldid==i )
         if( is.null(tau.i) ){
-            tau.est <- TauEst( y[train], x=x[train,], x.fixed=x.fixed[train,], family=family,
-                          standardize=standardize, n.coef=n.coef, nfolds=10 )
-#        tau <- tau.est$tau.1se + lasso.penalty*( tau.est$tau.opt - tau.est$tau.1se )
+            tauest <- NULL
+            attempt <- 1
+            max.attempts <- 20
+            while ( attempt <= max.attempts ) {
+                set.seed( opt$rep * 1000 + i * 100 + attempt )
+                tauest.try <- try(
+                    TauEst( y = y.train, x = x.train[, clust$keep_indices, drop=FALSE ],
+                           family = 'binomial', nfolds = 10, parallel = TRUE ),
+                    silent = TRUE
+                )   
+                if ( !inherits(tauest.try, "try-error") &&
+                     !is.null(tauest.try$tau.opt) &&
+                     !is.na(tauest.try$tau.opt) ) {
+                    tauest <- tauest.try
+                    break
+                }
+                attempt <- attempt + 1
+            }
             tau <- tau.est$tau.opt * lasso.factor
             print(paste0("tau=",tau))
         }else{
