@@ -943,7 +943,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                 }
                 attempt <- attempt + 1
             }
-            tau <- tau.est$tau.opt * lasso.factor
+            tau <- tauest$tau.opt * lasso.factor
             print(paste0("tau=",tau))
         }else{
             tau=tau.i
