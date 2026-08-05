@@ -931,8 +931,8 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             max.attempts <- 20
             while ( attempt <= max.attempts ) {
                 tauest.try <- try(
-                    TauEst( y = y.train, x = x.train[, clust$keep_indices, drop=FALSE ],
-                           family = 'binomial', nfolds = 10, parallel = TRUE ),
+                    TauEst( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
+                           family=family, nfolds = 10, parallel = TRUE ),
                     silent = TRUE
                 )   
                 if ( !inherits(tauest.try, "try-error") &&
