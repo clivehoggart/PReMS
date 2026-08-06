@@ -932,25 +932,16 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             tauest <- NULL
             attempt <- 1
             max.attempts <- 20
+            tau.folds <- 10
 
-            tab <- table(y[train])
-            tau.nfolds <- min(10, min(tab))
-            print( paste("tau folds=",tau.nfolds) )
-
-            if(tau.nfolds < 2) {
-                stop(
-                    "TauEst cannot run in cv.prems fold ", i,
-                    ": class counts are ",
-                    paste(names(tab), tab, sep="=", collapse=", ")
-                )
-            }
 
             while ( attempt <= max.attempts ) {
                 tauest.try <- try(
                     TauEst( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                            family=family, nfolds=tau.nfolds, parallel=TRUE ),
                     silent = TRUE
-                )   
+                )
+                print( tauest.try$tau.opt )
                 ok <- !inherits(tauest.try, "try-error") &&
                     !is.null(tauest.try$tau.opt) &&
                     length(tauest.try$tau.opt) == 1 &&
