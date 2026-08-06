@@ -1071,7 +1071,7 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
         ptr <- 1:n.coef
         tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
     }else{
-        tau.opt <- NA
+        tau.opt <- fit$lambda[1] * length(y)
     }
 
     beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:ncol.fixed)]
