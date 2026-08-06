@@ -935,6 +935,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
 
             tab <- table(y[train])
             tau.nfolds <- min(10, min(tab))
+            print( paste("tau folds=",tau.nfolds) )
 
             if(tau.nfolds < 2) {
                 stop(
