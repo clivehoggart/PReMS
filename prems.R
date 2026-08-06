@@ -932,7 +932,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             tauest <- NULL
             attempt <- 1
             max.attempts <- 20
-            tau.folds <- 10
+            tau.nfolds <- 10
 
 
             while ( attempt <= max.attempts ) {
