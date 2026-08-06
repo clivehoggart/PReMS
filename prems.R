@@ -1064,12 +1064,6 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
     beta <- getCoefGlmnet( fit, s=lambda.min )
     if( ncol.fixed!=0 )
         beta <- beta[-(1:ncol.fixed)]
-
-    print(cbind( fit$nzero, fit$lambda ))
-    print( fit$index )
-    print( fit$lambda.min )
-    print( lambda.min )
-    print( beta )
     
     s <- rep(1,ncol(x))
     if( standardize ){
