@@ -1054,18 +1054,23 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
                      parallel=parallel )
     }
 
-    if( family=='cox' )
-        ncol.fixed <- ncol(x.fixed)
-    else
-        ncol.fixed <- 1 + ncol(x.fixed)
+    ncol.fixed <- ncol(x.fixed)
 
     if( fit$nzero[fit$index[1]] > 0 )
         lambda.min <- fit$lambda.min
     else
         lambda.min <- fit$lambda[2]
 
-    beta <- getCoefGlmnet( fit, s=lambda.min )[-(1:ncol.fixed)]
+    beta <- getCoefGlmnet( fit, s=lambda.min )
+    if( ncol.fixed!=0 )
+        beta <- beta[-(1:ncol.fixed)]
 
+    print(cbind( fit$nzero, fit$lambda ))
+    print( fit$index )
+    print( fit$lambda.min )
+    print( lambda.min )
+    print( beta )
+    
     s <- rep(1,ncol(x))
     if( standardize ){
         ptr <- match( names(beta), colnames(x) )
