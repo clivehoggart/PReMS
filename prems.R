@@ -905,12 +905,15 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         yy <- y
         if( family=="cox" )
             yy <- y[,3]
-        if( family=="cox" | family=="binomial" )
+        if( family=="cox" | family=="binomial" ){
             foldid <- make.folds2( yy, folds=nfolds )
-        if( family=="gaussian" )
+            print( table( yy, foldid ) )
+        }
+        if( family=="gaussian" ){
             foldid <- make.folds.continuous( length(y), nfolds  )
+            print( table( foldid ) )
+        }
     }
-    print( table( foldid ) )
 
     ll <- vector()
 #    pred <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
