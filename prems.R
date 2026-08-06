@@ -929,15 +929,31 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             tauest <- NULL
             attempt <- 1
             max.attempts <- 20
+
+            tab <- table(y.train)
+            tau.nfolds <- min(10, min(tab))
+
+            if(tau.nfolds < 2) {
+                stop(
+                    "TauEst cannot run in cv.prems fold ", i,
+                    ": class counts are ",
+                    paste(names(tab), tab, sep="=", collapse=", ")
+                )
+            }
+
             while ( attempt <= max.attempts ) {
                 tauest.try <- try(
                     TauEst( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
-                           family=family, nfolds = 10, parallel = TRUE ),
+                           family=family, nfolds=tau.nfolds, parallel=TRUE ),
                     silent = TRUE
                 )   
-                if ( !inherits(tauest.try, "try-error") &&
-                     !is.null(tauest.try$tau.opt) &&
-                     !is.na(tauest.try$tau.opt) ) {
+                ok <- !inherits(tauest.try, "try-error") &&
+                    !is.null(tauest.try$tau.opt) &&
+                    length(tauest.try$tau.opt) == 1 &&
+                    is.numeric(tauest.try$tau.opt) &&
+                    is.finite(tauest.try$tau.opt) &&
+                    tauest.try$tau.opt > 0
+                if(ok){
                     tauest <- tauest.try
                     break
                 }
@@ -953,7 +969,8 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                         standardize=standardize, max2way=max2way,
                         no.cores=no.cores, verbose=FALSE )
         if( criteria=='waic'  | fit=='mean' ){
-            my.fit <- fillICs( fitted.models=my.fit, y=y[train], x=x[train,],
+            my.fit <- fillICs( fitted.models=my.fit,
+                              y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
                               n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
         }
         for( k in k.min:k.max ){
