@@ -1058,21 +1058,24 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
         ncol.fixed <- ncol(x.fixed)
     else
         ncol.fixed <- 1 + ncol(x.fixed)
-    beta <- getCoefGlmnet( fit, s='lambda.min' )[-(1:ncol.fixed)]
-    if( length(beta) > 0 ){
-        s <- rep(1,ncol(x))
-        if( standardize ){
-            ptr <- match( names(beta), colnames(x) )
-            s <- apply( x[,ptr,drop=FALSE], 2, sd )
-        }
-        lambda <- fit$lambda.min * length(y)
-        beta1 <- sort(abs(beta*s),decreasing=TRUE)
-        n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
-        ptr <- 1:n.coef
-        tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
-    }else{
-        tau.opt <- fit$lambda[1] * length(y)
+
+    if( fit$nzero[fit$index[1]] > 0 )
+        lambda.min <- fit$lambda.min
+    else
+        lambda.min <- fit$lambda[2]
+
+    beta <- getCoefGlmnet( fit, s=lambda.min )[-(1:ncol.fixed)]
+
+    s <- rep(1,ncol(x))
+    if( standardize ){
+        ptr <- match( names(beta), colnames(x) )
+        s <- apply( x[,ptr,drop=FALSE], 2, sd )
     }
+    lambda <- lambda.min * length(y)
+    beta1 <- sort(abs(beta*s),decreasing=TRUE)
+    n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
+    ptr <- 1:n.coef
+    tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
 
     beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:ncol.fixed)]
     if( length(beta) > 0 ){
