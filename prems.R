@@ -1,305 +1,68 @@
+# PReMS dependencies
 library(parallel)
 library(glmnet)
 library(pROC)
-#library(BayesLogit)
-library(gplots)
-library(MASS)
-library(exvatools)
-library(igraph)
 
-fit_logit_newton_laplace <- function(y, x, tau,
-                                     maxit = 50,
-                                     tol = 1e-8) {
-
-  y <- as.numeric(y)
-  x <- as.matrix(x)
-  tau <- as.numeric(tau)
-
-  if (!all(y %in% c(-1, 1))) {
-    stop("This function assumes y is coded -1/+1.")
-  }
-
-  n <- length(y)
-  k <- ncol(x)
-
-  log_sigmoid <- function(eta) {
-    ifelse(
-      eta >= 0,
-      -log1p(exp(-eta)),
-      eta - log1p(exp(eta))
-    )
-  }
-
-  logpost <- function(beta) {
-    eta <- y * as.numeric(x %*% beta)
-
-    loglike <- sum(log_sigmoid(eta))
-
-    pen.idx <- tau > 0
-
-    logprior <- 0.5 * sum(log(tau[pen.idx])) -
-      0.5 * sum(tau[pen.idx] * beta[pen.idx]^2)
-
-    loglike + logprior
-  }
-
-  ## intercept-only initial value if first column is intercept
-  p0 <- mean(y == 1)
-  p0 <- min(max(p0, 1e-6), 1 - 1e-6)
-
-  beta <- rep(0, k)
-  beta[1] <- qlogis(p0)
-
-  lp <- logpost(beta)
-
-  for (iter in seq_len(maxit)) {
-    eta <- y * as.numeric(x %*% beta)
-
-    score <- as.numeric(crossprod(x, y * plogis(-eta))) - tau * beta
-
-    w <- plogis(eta) * plogis(-eta)
-
-    H <- crossprod(x, x * w) + diag(tau, k)
-
-    cholH <- tryCatch(chol(H), error = function(e) NULL)
-    if (is.null(cholH)) {
-      stop("Hessian not positive definite. Check rank, separation or unpenalised covariates.")
-    }
-
-    step <- as.numeric(
-      backsolve(cholH, forwardsolve(t(cholH), score))
-    )
-
-    ## step-halving for monotone ascent
-    step.factor <- 1
-    repeat {
-      beta.new <- beta + step.factor * step
-      lp.new <- logpost(beta.new)
-
-      if (is.finite(lp.new) && lp.new >= lp - 1e-10) break
-
-      step.factor <- step.factor / 2
-
-      if (step.factor < 1e-8) {
-        beta.new <- beta
-        lp.new <- lp
-        break
-      }
-    }
-
-    beta <- beta.new
-
-    if (max(abs(step.factor * step)) < tol) break
-
-    lp <- lp.new
-  }
-
-  eta <- y * as.numeric(x %*% beta)
-  w <- plogis(eta) * plogis(-eta)
-
-  H <- crossprod(x, x * w) + diag(tau, k)
-
-  cholH <- chol(H)
-  logdetH <- 2 * sum(log(diag(cholH)))
-
-  logpost.hat <- logpost(beta)
-
-  log.ml.laplace <- logpost.hat - 0.5 * logdetH
-
-  list(
-    beta_hat = beta,
-    logpost_hat = logpost.hat,
-    log_ml_laplace = log.ml.laplace,
-    logdetH = logdetH,
-    iterations = iter,
-    converged = iter < maxit
-  )
-}
-
-find_outliers_sd <- function(X, threshold = 3, na.rm = TRUE) {
-  if (!is.matrix(X) && !is.data.frame(X)) {
-    stop("X must be a matrix or data.frame")
-  }
-
-  X <- as.matrix(X)
-
-  # compute z-scores columnwise
-  Z <- scale(X, center = TRUE, scale = TRUE)
-
-  # identify outliers
-  outlier_matrix <- abs(Z) > threshold
-
-  # indices of outlying entries
-  outlier_indices <- which(outlier_matrix, arr.ind = TRUE)
-
-  # corresponding values
-  outlier_values <- X[outlier_matrix]
-
-  list(
-    outlier_matrix = outlier_matrix,
-    outlier_indices = outlier_indices,
-    outlier_values = outlier_values,
-    z_scores = Z
-  )
-}
-
-select_proteins <- function(cor_mat, auc_values, r2_threshold = 0.64) {
-
-  if (!requireNamespace("igraph", quietly = TRUE)) {
-    stop("Package 'igraph' is required.")
-  }
-
-  if (!is.matrix(cor_mat) || nrow(cor_mat) != ncol(cor_mat)) {
-    stop("cor_mat must be a square correlation matrix.")
-  }
-
-  p <- ncol(cor_mat)
-
-  if (length(auc_values) != p) {
-    stop("Length of auc_values must match cor_mat dimensions.")
-  }
-
-  if (r2_threshold < 0 || r2_threshold > 1) {
-    stop("r2_threshold must be between 0 and 1.")
-  }
-
-  # --- Construct adjacency matrix ---
-  r2_mat <- cor_mat^2
-
-  adj_mat <- r2_mat >= r2_threshold
-  diag(adj_mat) <- FALSE
-
-  # --- Build graph ---
-  g <- igraph::graph_from_adjacency_matrix(
-    adj_mat,
-    mode = "undirected",
-    diag = FALSE
-  )
-
-  comps <- igraph::components(g)
-  membership <- comps$membership
-
-  # --- Select highest AUC per component ---
-  keep <- integer(0)
-  representatives <- list()
-
-  for (cid in unique(membership)) {
-    members <- which(membership == cid)
-
-    if (length(members) == 1) {
-      best <- members
-    } else {
-      best <- members[which.max(auc_values[members])]
-    }
-
-    keep <- c(keep, best)
-    representatives[[as.character(cid)]] <- best
-  }
-
-  list(
-    keep_indices = sort(keep),
-    components = membership,
-    representatives = representatives,
-    graph = g
-  )
-}
 
 cox_pl_left_trunc <- function( Surv_obj, eta ) {
     if( length(eta) != nrow(Surv_obj) ) stop("eta and surv must be same length")
 
-    start  <- Surv_obj[, 1]
-    stop   <- Surv_obj[, 2]
-    status <- Surv_obj[, 3]
+    if( ncol(Surv_obj) == 2 ){
+        start <- rep(-Inf, nrow(Surv_obj))
+        stop <- Surv_obj[,1]
+        status <- Surv_obj[,2]
+    }else if( ncol(Surv_obj) == 3 ){
+        start <- Surv_obj[,1]
+        stop <- Surv_obj[,2]
+        status <- Surv_obj[,3]
+    }else{
+        stop("Survival response must be Surv(time, status) or Surv(start, stop, status).")
+    }
 
-  # order by stop time
     ord <- order(stop)
-    start  <- start[ord]
-    stop   <- stop[ord]
+    start <- start[ord]
+    stop <- stop[ord]
     status <- status[ord]
-    eta    <- eta[ord]
+    eta <- eta[ord]
 
     loglik <- 0
     for( i in which(status == 1) ){
         t_i <- stop[i]
-        riskset <- which( start <= t_i & stop >= t_i )
+        riskset <- which(start <= t_i & stop >= t_i)
         loglik <- loglik + eta[i] - log(sum(exp(eta[riskset])))
     }
     return(loglik)
 }
 
-my.rpg <- function(z){
-    omega <- rpg( num=1, h=1, z )
-    return(omega)
-}
-
-Bayes_logit <- function( y=y, X, m0, P0, samp, burn ){
-    beta.samp <- matrix( ncol=length(m0), nrow=(samp) )
-    beta <- rep(0,length(m0))
-    kappa <- y-0.5
-    omega <- vector(length=length(y))
-    tX <- t(X)
-    P0.m0 <- P0 %*% m0
-    tX.kappa <- tX %*% kappa
-    m1 <- tX.kappa + P0.m0
-    for( k in 1:(samp+burn) ){
-        eta <- X %*% beta
-        omega <- sapply( as.vector(eta), my.rpg )
-#        V.omega <- solve(t(X) %*% diag(omega) %*% X + P0)
-        V.omega <- solve( multd(tX,diag(omega)) %*% X + P0)
-        m.omega <- V.omega %*% m1
-        beta <- mvrnorm( n=1, mu=m.omega, Sigma=V.omega )
-        if( k>burn ){
-            beta.samp[(k-burn),] <- beta
-        }
-    }
-    return(beta.samp)
-}
-
 plot.cv.prems <- function( cv.fit, ylim=NULL, cex=1 ){
     if( is.null(ylim) ){
-        ylim <- range(c( (cv.fit$cvm-cv.fit$cvsd), (cv.fit$cvm+cv.fit$cvsd) ))
+        ylim <- range(c(cv.fit$cvm-cv.fit$cvsd, cv.fit$cvm+cv.fit$cvsd))
     }
     k <- as.numeric(names(cv.fit$cvm))
-    plotCI( k, cv.fit$cvm, col='red', xlab='Model size', ylab='', uiw=cv.fit$cvsd, barcol='dimgrey', ylim=ylim,pch=19, cex.lab=cex, cex.axis=cex )
-    mtext('Predictive log-likelihood',side=2,line=3,cex=cex)
-    abline(v=(k)[cv.fit$one.se], lty=2)
-    abline(v=(k)[cv.fit$best], lty=2)
+    plot(k, cv.fit$cvm, xlab='Model size', ylab='Cross-validated score',
+         ylim=ylim, pch=19, cex.lab=cex, cex.axis=cex)
+    arrows(k, cv.fit$cvm-cv.fit$cvsd, k, cv.fit$cvm+cv.fit$cvsd,
+           angle=90, code=3, length=0.05)
+    abline(v=k[cv.fit$one.se], lty=2)
+    abline(v=k[cv.fit$best], lty=2)
 }
 
 getCoefGlmnet <- function( fit, s="lambda.min" ){
-    if( s=="lambda.min" )
-        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.min ) ]
-    else if( s=="lambda.1se" )
-        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==fit$lambda.1se ) ]
-    else
-        tmp2 <- fit$glmnet$beta[ , which( fit$lambda==s ) ]
-    ptr <- which( tmp2!=0 )
-    beta <- tmp2[ptr]
+    beta <- as.matrix(stats::coef(fit, s=s))
+    if( nrow(beta) > 0 && rownames(beta)[1] == "(Intercept)" ){
+        beta <- beta[-1,,drop=FALSE]
+    }
+    beta <- beta[,1]
+    beta <- beta[beta!=0]
     return(beta)
 }
 
 cv.auc <- function( y, pred, folds ){
     r <- vector()
     for( i in 1:max(folds) ){
-        r[i] <- roc( y[folds==i], pred[folds==i] )$auc
+        r[i] <- pROC::roc(y[folds==i], pred[folds==i], quiet=TRUE)$auc
     }
     return(mean(r))
-}
-
-null.sim <- function( fitted.models, X, y, from=from, samples, no.cores=10 ){
-    waic.null <- vector()
-    for( i in 1:samples ){
-        selected.covs <- names(getModelFit( fitted.models, from )$beta)[-1]
-        ptr <- match( selected.covs, colnames(X) )
-        x.null <- X[sample(1:nrow(X)),]
-        x.null[,ptr] <- X[,ptr]
-
-        tmp <- ModelSearchIncrease( fitted.models=fitted.models,  X=x.null, y=y, no.cores=no.cores, from=from )
-        tmp <- fillICs( fitted.models=tmp, y=y, X=x.null, n.waic=5000, model.sizes=from+1, no.cores=no.cores )
-        tmp2 <- getICs(tmp)
-        waic.null[i] <- tmp2[ from+2, 4 ]
-    }
-    return(waic.null)
 }
 
 getEta <- function( y, x, beta ){
@@ -360,14 +123,6 @@ getHessian_gpt <- function( x, beta, tau ){# In matrix notation
     return(logdetH)
 }
 
-getHessian2 <- function( x, beta, tau ){# In matrix notation
-  eta <- x %*% beta
-  theta <- 1 / ( 1 + exp(-eta) )
-  R <- diag(x=as.vector(theta*(1-theta)))
-  hess <- t(x) %*% R %*% x + diag(tau,nrow=length(tau))
-  return(hess)
-}
-
 expand.model <- function( old.model, P ){
   k <- length(old.model) + 1
   gamma <- setdiff( 1:P, old.model )
@@ -378,39 +133,32 @@ expand.model <- function( old.model, P ){
   return(new.model)
 }
 
-getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='gaussian', m1, sd1, m.fixed, sd.fixed, m.y, s.y, n.waic=0, burn=10, gpt=FALSE ){
-    n <- length(y)
-    w.aic <- NA
-    lppd <- NA
-    p.waic <- NA
-    p.waic2 <- NA
-    p.anna <- NA
-    dic <- NA
-    beta.bar <- NA
+getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='gaussian', m1, sd1, m.fixed, sd.fixed, m.y, s.y ){
+    n <- NROW(y)
 
+    k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
+    k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
     if( family=='gaussian' | family=='binomial' ){
         x1 <- cbind( rep(1,n), x.fixed, x.select )
         k <- ncol(x1) # total covs + intercept
-        k1 <- ifelse( is.null(x.select), 0, ncol(x.select) ) # no. of selected covs
-        k2 <- ifelse( is.null(x.fixed), 0, ncol(x.fixed) ) # no. fixed covs
         tau1 <- c( rep(1e-12,k2+1), rep(tau,k1) )
     }
 
     if( family=='cox' ){
         if( k1==0 & k2==0 ){
-            fit <- coxph( y ~ 1, model = FALSE, x = FALSE, y = FALSE )
+            fit <- survival::coxph( y ~ 1, model = FALSE, x = FALSE, y = FALSE )
         }else if( k1==0 & k2!=0 ){
-            fit <- coxph( y ~ x.fixed, model = FALSE, x = FALSE, y = FALSE )
+            fit <- survival::coxph( y ~ x.fixed, model = FALSE, x = FALSE, y = FALSE )
         }else if( k1!=0 & k2==0 ){
-            fit <- coxph( y ~ ridge( x.select, theta = tau, scale=FALSE ),
+            fit <- survival::coxph( y ~ survival::ridge( x.select, theta = tau, scale=FALSE ),
                          model = FALSE, x = FALSE, y = FALSE )
         }else{
-            fit <- coxph( y ~ x.fixed + ridge( x.select, theta = tau, scale=FALSE ),
+            fit <- survival::coxph( y ~ x.fixed + survival::ridge( x.select, theta = tau, scale=FALSE ),
                          model = FALSE, x = FALSE, y = FALSE )
         }
         beta.tilde <- fit$coef
-        l.gamma1 <- fit$loglik[2]
-        aic = -2*fit$loglik[2] + 2*length(beta.tilde)
+        l.gamma1 <- tail(fit$loglik, 1)
+        aic <- -2*l.gamma1 + 2*length(beta.tilde)
     }
     if( family=='gaussian' ){
         penalty <- diag(c(rep(0, k2+1), rep(tau, k1)), k)
@@ -435,20 +183,14 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
     if( family=='binomial' ){
         yy <- 2*y-1
 
-        if( !gpt ){
-            tmp <- optim( rep(0,k), fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
-            beta.tilde <- tmp$par
+        tmp <- optim( rep(0,k), fn=getLogPost, gr=getDLogPost, y=yy, x=x1, tau=tau1, method="L-BFGS" )
+        beta.tilde <- tmp$par
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
-            logPost <- -tmp$value
+        logPost <- -tmp$value
 #            hess <- getHessian2( x1, beta.tilde, tau1 )
 #            l.gamma1 <- logPost - 0.5*log(det(hess))
-            logdetH <- getHessian_gpt( x1, beta.tilde, tau1 )
-            l.gamma1 <- logPost - 0.5 * logdetH
-        }else{
-            fit = fit_logit_newton_laplace( y=yy, x=x1, tau-tau1 )
-            beta.tilde = fit$beta_hat
-            l.gamma1 <- fit$log_ml_laplace
-        }
+        logdetH <- getHessian_gpt( x1, beta.tilde, tau1 )
+        l.gamma1 <- logPost - 0.5 * logdetH
         eta <- getEta( yy, x1, beta.tilde )
         aic <- 2 * (sum(log(1 + exp(-eta))) + length(beta.tilde) - 1)
     }
@@ -458,8 +200,6 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
                 i <- ii + 1
                 beta.tilde[i] <- beta.tilde[i] / sd.fixed[ii]
                 beta.tilde[1] <- beta.tilde[1] - m.fixed[ii]*beta.tilde[i]
-                beta.bar[i] <- beta.bar[i] / sd.fixed[ii]
-                beta.bar[1] <- beta.bar[1] - m.fixed[ii]*beta.bar[i]
             }
         }
         if( k1>0 ){
@@ -467,37 +207,33 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
                 i <- ii + k2 + 1
                 beta.tilde[i] <- beta.tilde[i] / sd1[ii]
                 beta.tilde[1] <- beta.tilde[1] - m1[ii]*beta.tilde[i]
-                beta.bar[i] <- beta.bar[i] / sd1[ii]
-                beta.bar[1] <- beta.bar[1] - m1[ii]*beta.bar[i]
             }
         }
     }else if( family=='cox' ){
         if( k2>0 ){
             for( i in 1:k2 ){
                 beta.tilde[i] <- beta.tilde[i] / sd.fixed[i]
-                beta.bar[i] <- beta.bar[i] / sd.fixed[i]
             }
         }
         if( k1>0 ){
             for( ii in 1:k1 ){
                 i <- ii + k2
                 beta.tilde[i] <- beta.tilde[i] / sd1[ii]
-                beta.bar[i] <- beta.bar[i] / sd1[ii]
             }
         }
     }
-    ret <- list( -l.gamma1, aic, w.aic, beta.tilde, beta.bar, lppd, p.waic )
+    ret <- list( -l.gamma1, aic, beta.tilde )
 ######################################################################
 # Returning MINUS log-posterior to be consistent with other measures #
 # of model fit, ie ICs, which are minimised for best fit             #
 ######################################################################
-    names(ret) <- c( 'ML', 'aic', 'waic', 'beta', 'beta.bar', 'lppd', 'p.waic' )
+    names(ret) <- c( 'ML', 'aic', 'beta' )
     return( ret )
 }
 
 ############# Public functions below #############
 
-prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
+prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5,
                   family='gaussian', tau=1, max.s=10, no.cores=10,
                   standardize=TRUE, verbose=TRUE ){
     model.indicator <- list()
@@ -541,7 +277,6 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     null <- getMargLikelihood2( y=y, x.fixed=x.fixed, family=family, tau=tau,
                                m1=vector(length=0), sd1=vector(length=0),
                                m.fixed=m.fixed, sd.fixed=s.fixed,
-                               n.waic=0, burn=10,
                                m.y=m.y, s.y=s.y )
 
     model.indicator[[1]] <- cbind(1:Ncov)
@@ -549,7 +284,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         print( paste('Searching',Ncov,'1D models (all possible)') )
     }
 
-    fitted.models[[1]] <- mclapply(1:Ncov, function(ptr)
+    fitted.models[[1]] <- parallel::mclapply(1:Ncov, function(ptr)
     {getMargLikelihood2( x.select=x[,ptr.covs.use[ptr],drop=FALSE], x.fixed=x.fixed, y=y,
                         family=family, tau=tau,
                         m1=m1[ptr.covs.use[ptr]], sd1=s1[ptr.covs.use[ptr]],
@@ -567,14 +302,14 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
         }
     }
     if( max2way!='all' ){
-        ML <- unlist(mclapply( fitted.models[[1]], getElement, 'ML', mc.cores=no.cores ))
+        ML <- unlist(parallel::mclapply( fitted.models[[1]], getElement, 'ML', mc.cores=no.cores ))
         model.indicator[[2]] <- stepUP( model.indicator[[1]], Ncov, ML, max.s=max2way )
         if( verbose ){
             print( paste('Searching',nrow(model.indicator[[2]]),'2D models') )
         }
     }
     k <- 2
-    fitted.models[[k]] <- mclapply( 1:nrow(model.indicator[[k]]), function(i)
+    fitted.models[[k]] <- parallel::mclapply( 1:nrow(model.indicator[[k]]), function(i)
     {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]], x.fixed=x.fixed, y=y,
                         family=family, tau=tau,
                         m1=m1[ptr.covs.use[model.indicator[[k]][i,]]],
@@ -584,13 +319,14 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     if( verbose ){
         print("Finished 2D models")
     }
-    ML <- unlist(mclapply( fitted.models[[2]], getElement, 'ML', mc.cores=no.cores ))
+    ML <- unlist(parallel::mclapply( fitted.models[[2]], getElement, 'ML', mc.cores=no.cores ))
 
     s <- order( ML, decreasing=FALSE )
-    tmp.fits <- list()
-    tmp.indicator <- matrix( ncol=k, nrow=max.s )
-    iML <- vector()
-    for( j in 1:max.s ){
+    n.keep <- min(max.s, length(s))
+    tmp.fits <- vector("list", n.keep)
+    tmp.indicator <- matrix(ncol=k, nrow=n.keep)
+    iML <- numeric(n.keep)
+    for( j in seq_len(n.keep) ){
         iML[j] <- ML[s[j]]
         tmp.fits[[j]] <- fitted.models[[2]][[s[j]]]
         tmp.indicator[j,] <- model.indicator[[2]][s[j],]
@@ -605,7 +341,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
             if( verbose ){
                 print( paste('Searching ',nrow(model.indicator[[k]]),' ',k,'D models',sep='') )
             }
-            fitted.models[[k]] <- mclapply(1:nrow(model.indicator[[k]]), function(i)
+            fitted.models[[k]] <- parallel::mclapply(1:nrow(model.indicator[[k]]), function(i)
             {getMargLikelihood2( x.select=x[,ptr.covs.use[model.indicator[[k]][i,]]],
                                 x.fixed=x.fixed, y=y,
                                 family=family, tau=tau,
@@ -617,13 +353,14 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
             if( verbose ){
                 print( paste('Finished ',k,'D models',sep='') )
             }
-            ML <- unlist(mclapply( fitted.models[[k]], getElement, 'ML', mc.cores=no.cores ))
+            ML <- unlist(parallel::mclapply( fitted.models[[k]], getElement, 'ML', mc.cores=no.cores ))
 
             s <- order( ML, decreasing=FALSE )
-            tmp.fits <- list()
-            tmp.indicator <- matrix( ncol=k, nrow=max.s )
-            iML <- vector()
-            for( j in 1:max.s ){
+            n.keep <- min(max.s, length(s))
+            tmp.fits <- vector("list", n.keep)
+            tmp.indicator <- matrix(ncol=k, nrow=n.keep)
+            iML <- numeric(n.keep)
+            for( j in seq_len(n.keep) ){
                 iML[j] <- ML[s[j]]
                 tmp.fits[[j]] <- fitted.models[[k]][[s[j]]]
                 tmp.indicator[j,] <- model.indicator[[k]][s[j],]
@@ -642,7 +379,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5, omega=0.5,
     return( ret )
 }
 
-ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10, max.s=max.s ){
+ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10, max.s=NULL ){
     x <- t(t(x)-fitted.models$m)
     x <- t(t(x)/fitted.models$sd)
 
@@ -650,96 +387,70 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10,
         x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
         x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
     }
+
     if( fitted.models$family=='gaussian' ){
         m.y <- mean(y)
         s.y <- sd(y)
-        yy <- ( y - m.y ) / s.y
+        y.fit <- ( y - m.y ) / s.y
     }else{
         m.y <- NULL
         s.y <- NULL
+        y.fit <- y
     }
 
     k <- length(fitted.models$fitted.models)
     ptr.covs.use <- which( fitted.models$sd!=0 )
     Ncov <- length(ptr.covs.use)
 
-    ML <- unlist(mclapply( fitted.models$fitted.models[[k]], getElement, 'aic', mc.cores=no.cores ))
+    # By default preserve the search breadth retained at the current largest
+    # model size. max.s can be supplied explicitly to widen or narrow expansion.
+    if( is.null(max.s) ){
+        max.s <- length(fitted.models$fitted.models[[k]])
+    }
 
-    fitted.models$model.indicator[[k+1]] <- stepUP( fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s )
+    ML <- unlist(parallel::mclapply(
+        fitted.models$fitted.models[[k]], getElement, 'ML', mc.cores=no.cores
+    ))
 
-    fitted.models$fitted.models[[k+1]] <- mclapply(1:nrow(fitted.models$model.indicator[[k+1]]) , function(i)
-    {getMargLikelihood2( x.select=x[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        x.fixed=x.fixed,
-                        y=y, family=fitted.models$family,
-                        tau=fitted.models$tau,
-                        m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                        m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed,
-                        m.y=m.y, s.y=s.y )},
-    mc.cores=no.cores)
+    fitted.models$model.indicator[[k+1]] <- stepUP(
+        fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s
+    )
+
+    fitted.models$fitted.models[[k+1]] <- parallel::mclapply(
+        seq_len(nrow(fitted.models$model.indicator[[k+1]])),
+        function(i){
+            getMargLikelihood2(
+                x.select=x[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]],drop=FALSE],
+                x.fixed=x.fixed,
+                y=y.fit, family=fitted.models$family,
+                tau=fitted.models$tau,
+                m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
+                m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed,
+                m.y=m.y, s.y=s.y
+            )
+        },
+        mc.cores=no.cores
+    )
+
+    # Keep the highest-ranking models, matching the behaviour of prems().
+    ML.new <- unlist(parallel::mclapply(
+        fitted.models$fitted.models[[k+1]], getElement, 'ML', mc.cores=no.cores
+    ))
+    s <- order(ML.new, decreasing=FALSE)
+    n.keep <- min(max.s, length(s))
+    keep <- s[seq_len(n.keep)]
+
+    fitted.models$fitted.models[[k+1]] <- fitted.models$fitted.models[[k+1]][keep]
+    fitted.models$model.indicator[[k+1]] <- fitted.models$model.indicator[[k+1]][keep,,drop=FALSE]
+
     return(fitted.models)
 }
 
-fillICs <- function( fitted.models, y, x, x.fixed=NULL, n.waic, no.cores=10, n.rank=10, model.sizes, verbose=TRUE ){
-    x <- t(t(x)-fitted.models$m)
-    x <- t(t(x)/fitted.models$sd)
-
-    if( !is.null(x.fixed) ){
-        x.fixed <- t(t(x.fixed)-fitted.models$m.fixed)
-        x.fixed <- t(t(x.fixed)/fitted.models$sd.fixed)
-    }
-    if( fitted.models$family=='gaussian' ){
-        m.y <- mean(y)
-        s.y <- sd(y)
-        yy <- ( y - m.y ) / s.y
-    }else{
-        m.y <- NULL
-        s.y <- NULL
-    }
-
+getModelFit <- function( fitted.models, size=1, rank=1, no.cores=10, criteria='ML' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
-    for( size in model.sizes ){
-        ic <- sapply( fitted.models$fitted.models[[size]], getElement, 'aic' )
-        s <- order(ic)
-        ptr <- fitted.models$model.indicator[[size]][s[1:n.rank],, drop=FALSE]
-        tmp <-  mclapply( 1:n.rank,
-                         function(ii){getMargLikelihood2(
-                                          x.select=x[ ,ptr.covs.use[ptr[ii,]], drop=FALSE],
-                                          x.fixed=x.fixed,
-                                          y=y, tau=fitted.models$tau,
-                                          family=fitted.models$family,
-                                          n.waic=n.waic,
-                                          m1=fitted.models$m[ptr.covs.use[ptr[ii,]]],
-                                          sd1=fitted.models$sd[ptr.covs.use[ptr[ii,]]],
-                                          m.fixed=fitted.models$m.fixed,
-                                          sd.fixed=fitted.models$sd.fixed,
-                                          m.y=m.y, s.y=s.y )},
-                         mc.cores=no.cores )
-        for( i in 1:n.rank ){
-            fitted.models$fitted.models[[size]][[s[i]]] <- tmp[[i]]
-        }
-        if( verbose ){
-            print(paste(size,'D models complete',sep=''))
-        }
-    }
-    return( fitted.models )
-}
 
-getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria='ML' ){
-    ptr.covs.use <- which( fitted.models$sd!=0 )
-    model.sizes <- size
-    if( is.null(model.sizes) ){
-        model.sizes=1:length(fitted.models)
-    }
-    if( length(model.sizes)>1 ){
-        min.ic <- vector()
-        for( i in model.sizes ){
-            min.ic[i] <- min(unlist(mclapply( fitted.models$fitted.models[[i]], getElement, criteria, mc.cores=no.cores )),na.rm=TRUE)
-        }
-        size <- order(min.ic)[1]
-    }
-
-    ptr <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
+    ptr <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
 
     model.fit <- list()
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
@@ -751,7 +462,6 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
             nmes <- c( fitted.models$cnames.fixed, fitted.models$cnames[ptr.covs.use[ptr1[i,]]] )
         }
         names(model.fit[[i]]$beta) <- nmes
-        names(model.fit[[i]]$beta.bar) <- nmes
     }
 
     if( length(ptr)==1 ){
@@ -763,32 +473,24 @@ getModelFit <- function( fitted.models, size=NULL, rank=1, no.cores=10, criteria
 thin.prems <- function( fit, size, rank ){
     fitted.models <- list()
     model.indicator <- list()
-    for( i in 1:size ){
-        s <- order( unlist(sapply( fit$fitted.models[[i]], getElement, 'aic' ) ))
-        fitted.models[[i]] <- list()
-        model.indicator[[i]] <- list()
-        for( j in 1:rank ){
-            fitted.models[[i]][[j]] <- fit$fitted.models[[i]][[s[j]]]
-            model.indicator[[i]] <- fit$model.indicator[[i]][ s[j], , drop=FALSE ]
-        }
+    for( i in seq_len(size) ){
+        s <- order(unlist(sapply(fit$fitted.models[[i]], getElement, 'ML')))
+        keep <- s[seq_len(min(rank, length(s)))]
+        fitted.models[[i]] <- fit$fitted.models[[i]][keep]
+        model.indicator[[i]] <- fit$model.indicator[[i]][keep,,drop=FALSE]
     }
-    ret <- list( fit$null, fitted.models, model.indicator, fit$cnames.fixed, fit$cnames,
-                fit$m, fit$sd, fit$m.fixed, fit$sd.fixed, fit$tau, fit$standardize, fit$family )
+    ret <- list(fit$null, fitted.models, model.indicator, fit$cnames.fixed, fit$cnames,
+                fit$m, fit$sd, fit$m.fixed, fit$sd.fixed, fit$tau, fit$standardize, fit$family)
     names(ret) <- c('null','fitted.models','model.indicator', 'cnames.fixed', 'cnames',
-                    'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family' )
-    return( ret )
+                    'm', 'sd', 'm.fixed', 'sd.fixed', 'tau', 'standardize', 'family')
+    return(ret)
 }
 
-predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank=1,
-                          no.cores=10, criteria='ML', fit='mode' ){
+predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=1, rank=1,
+                          no.cores=10, criteria='ML' ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
-    best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
-    if( fit=='mode' ){
-        best.fit.model <- fitted.models$fitted.models[[size]][[best.fit]]$beta
-    }
-    if( fit=='mean' ){
-        best.fit.model <- fitted.models$fitted.models[[size]][[best.fit]]$beta.bar
-    }
+    best.fit <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
+    best.fit.model <- fitted.models$fitted.models[[size]][[best.fit]]$beta
     ptr <- fitted.models$model.indicator[[size]][best.fit,]
 
     ptr1 <- match( fitted.models$cnames[ptr.covs.use[ptr]], colnames(newx) )
@@ -811,92 +513,30 @@ predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=NULL, rank
     return(pred)
 }
 
-predict.prems.bayes <- function( fitted.models, newx, y.train, x.train,
-                                size=NULL, rank=1, iter=10000, no.cores=10, criteria='waic' ){
-    ptr.covs.use <- which( fitted.models$sd!=0 )
-    for( i in 1:ncol(x.train) ){
-        newx[,i] <- (newx[,i]-fitted.models$m[i]) / fitted.models$sd[i]
-        x.train[,i] <- (x.train[,i]-fitted.models$m[i]) / fitted.models$sd[i]
-    }
-
-    best.fit <- order( unlist(mclapply( fitted.models$fitted.models[[size]], getElement, criteria ) ))[rank]
-    ptr1 <- fitted.models$model.indicator[[size]][best.fit,]
-    ptr <- match( fitted.models$cnames[ptr.covs.use[ptr1]], colnames(x.train) )
-
-
-    tau1 <- c( 1e-12, rep(fitted.models$tau,size) )
-    iter.cores <- ceiling(iter/no.cores)
-    beta <- mclapply(1:no.cores, function(i) {parallel.BayesLogit( y=y.train, X=cbind(1,x.train[,ptr]), m0=rep(0,size+1), P0=diag(tau1), samp=iter.cores, burn=500, dummy=i )}, mc.cores=no.cores )
-
-#    beta <- lapply( post.samples, getElement, 'beta' )
-
-    ptr.test <- match( colnames(x.train)[ptr], colnames(newx) )
-    X <- cbind( 1, newx[,ptr.test,drop=FALSE] )
-    pred.full <- matrix(ncol=no.cores,nrow=nrow(newx))
-    beta2 <- matrix(ncol=ncol(X),nrow=0)
-    for( i in 1:no.cores ){
-        tmp <- mclapply(1:iter.cores, function(j){ 1/( 1+exp(-X %*% beta[[i]][j,]))}, mc.cores=no.cores )
-        theta <- simplify2array(tmp,higher=FALSE)
-        pred.full[,i] <- apply( theta, 1, mean )
-        beta2 <- rbind( beta2, beta[[i]] )
-    }
-    pred.full <- apply( pred.full, 1, mean )
-    beta.bar <- apply( beta2, 2, mean )
-    eta.hat <- X %*% beta.bar
-    pred.hat <- 1/(1 + exp(-eta.hat))
-
-    return( cbind( pred.full, pred.hat) )
-}
-
-parallel.BayesLogit <- function( y, X, m0, P0, samp, burn, dummy ){
-    post.samples <- Bayes_logit( y=y, X=X, m0=m0, P0=P0, samp=samp, burn=burn )
-    return(post.samples)
-}
-
 getICs <- function( fitted.models, k.min=1 ){
     ll <- length(fitted.models$model.indicator)
-    res <- matrix( ncol=4, nrow=ll+2-k.min )
+    res <- matrix( ncol=3, nrow=ll+2-k.min )
     for( ii in k.min:ll ){
         k <- ncol(fitted.models$model.indicator[[ii]])
         if( !is.null(k) ){
             aic <- min(sapply( fitted.models$fitted.models[[ii]], getElement, 'aic' ),na.rm=TRUE)
-            waic <- min(sapply( fitted.models$fitted.models[[ii]], getElement, 'waic' ),na.rm=TRUE)
             ml <- min(sapply( fitted.models$fitted.models[[ii]], getElement, 'ML' ),na.rm=TRUE)
-            res[(ii+2-k.min),] <- c( k, aic, waic, ml )
+            res[(ii+2-k.min),] <- c( k, aic, ml )
         }
     }
-    res[1,] <- c( 0, fitted.models$null$aic, fitted.models$null$waic, fitted.models$null$ML )
-    colnames(res) <- c('k', 'aic', 'waic', 'ml' )
+    res[1,] <- c( 0, fitted.models$null$aic, fitted.models$null$ML )
+    colnames(res) <- c('k', 'aic', 'ml' )
     return(res)
 }
 
-prems.clean <- function( all.fits ){
-    model.indicator <- list()
-    fitted.models <- list()
-    for( i in 1:length(all.fits$fitted.models) ){
-        ptr <- which(!is.na(sapply( all.fits$fitted.models[[i]], getElement, 'waic' )))
-        if( length(ptr)>0 ){
-            fitted.models[[i]] <- list()
-            model.indicator[[i]] <- matrix(ncol=i,nrow=length(ptr))
-            for( j in 1:length(ptr) ){
-                fitted.models[[i]][[j]] <- all.fits$fitted.models[[i]][[ptr[j]]]
-                tmp <- all.fits$model.indicator[[i]][ptr[j],]
-                model.indicator[[i]][j,] <- tmp
-            }
-        }
-    }
-    ret <- list( all.fits$null, fitted.models, model.indicator, all.fits$cnames, all.fits$m, all.fits$sd, all.fits$tau, all.fits$standardize, all.fits$family )
-    names(ret) <- c('null','fitted.models','model.indicator', 'cnames', 'm', 'sd', 'tau', 'standardize', 'family' )
-    return( ret )
-}
-
 cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
-                     max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
-                     n.waic=100, n.coef=1, lasso.factor=1,
-                     criteria='ML', fit='mode', family='binomial', verbose=TRUE ){
+                      max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
+                      lasso.factor=1, criteria='ML', family='binomial', verbose=TRUE ){
+    n <- NROW(y)
+
     if( is.null(foldid) & is.null(nfolds) ){
-        nfolds <- length(y)
-        foldid <- 1:nfolds
+        nfolds <- n
+        foldid <- seq_len(nfolds)
     }
     if( !is.null(foldid) & is.null(nfolds) ){
         nfolds <- length(unique(foldid))
@@ -904,195 +544,210 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
     if( is.null(foldid) ){
         yy <- y
         if( family=="cox" )
-            yy <- y[,3]
+            yy <- y[,ncol(y)]
         if( family=="cox" | family=="binomial" ){
-            foldid <- make.folds2( yy, folds=nfolds )
-            print( table( yy, foldid ) )
+            foldid <- make.folds2(yy, folds=nfolds)
+            if( verbose ) print(table(yy, foldid))
         }
         if( family=="gaussian" ){
-            foldid <- make.folds.continuous( length(y), nfolds  )
-            print( table( foldid ) )
+            foldid <- make.folds.continuous(n, nfolds)
+            if( verbose ) print(table(foldid))
         }
     }
 
-    ll <- vector()
-#    pred <- matrix(ncol=(k.max-k.min+1),nrow=length(y))
-    pwll <- matrix( nrow=nfolds, ncol=(k.max-k.min+1) )
+    pwll <- matrix(nrow=nfolds, ncol=(k.max-k.min+1))
     if( verbose ){
         print(paste(nfolds,'fold cross-validation'))
     }
-    selected.coef <- vector("list", k.max )
+    selected.coef <- vector("list", k.max)
     for( k in k.min:k.max ){
-        selected.coef[[k]] = matrix( nrow=nfolds, ncol=k )
+        selected.coef[[k]] <- matrix(nrow=nfolds, ncol=k)
     }
-    for( i in 1:nfolds ){
-        train <- which( foldid!=i )
-        test <- which( foldid==i )
+
+    subset_y <- function(y, idx) {
+        if( family == "cox" ){
+            y[idx,,drop=FALSE]
+        }else{
+            y[idx]
+        }
+    }
+
+    for( i in seq_len(nfolds) ){
+        train <- which(foldid!=i)
+        test <- which(foldid==i)
+        y.train <- subset_y(y, train)
+        y.test <- subset_y(y, test)
+        x.fixed.train <- if( is.null(x.fixed) ) NULL else x.fixed[train,,drop=FALSE]
+        x.fixed.test <- if( is.null(x.fixed) ) NULL else x.fixed[test,,drop=FALSE]
+
         if( is.null(tau.i) ){
             tauest <- NULL
             attempt <- 1
             max.attempts <- 20
-            tau.nfolds <- 10
+            tau.nfolds <- min(10, NROW(y.train))
 
-
-            while ( attempt <= max.attempts ) {
+            while( attempt <= max.attempts ){
                 tauest.try <- try(
-                    TauEst( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
-                           family=family, nfolds=tau.nfolds, parallel=TRUE ),
-                    silent = TRUE
+                    TauEst(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
+                           family=family, nfolds=tau.nfolds, parallel=FALSE),
+                    silent=TRUE
                 )
-                print( tauest.try$tau.opt )
                 ok <- !inherits(tauest.try, "try-error") &&
                     !is.null(tauest.try$tau.opt) &&
                     length(tauest.try$tau.opt) == 1 &&
                     is.numeric(tauest.try$tau.opt) &&
                     is.finite(tauest.try$tau.opt) &&
                     tauest.try$tau.opt > 0
-                if(ok){
+                if( ok ){
                     tauest <- tauest.try
                     break
                 }
                 attempt <- attempt + 1
             }
+            if( is.null(tauest) ){
+                stop("Unable to estimate tau in cross-validation fold ", i,
+                     ". Supply tau.i explicitly or inspect the glmnet fit.")
+            }
             tau <- tauest$tau.opt * lasso.factor
-            print(paste0("tau=",tau))
+            if( verbose ) print(paste0("tau=",tau))
         }else{
-            tau=tau.i
+            tau <- tau.i
         }
-        my.fit <- prems( y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
+
+        my.fit <- prems(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
                         family=family, tau=tau, k.max=k.max, max.s=max.s,
                         standardize=standardize, max2way=max2way,
-                        no.cores=no.cores, verbose=FALSE )
-        if( criteria=='waic'  | fit=='mean' ){
-            my.fit <- fillICs( fitted.models=my.fit,
-                              y=y[train], x=x[train,], x.fixed=x.fixed[train,,drop=FALSE],
-                              n.waic=n.waic, model.sizes=k.min:k.max, no.cores=no.cores, verbose=FALSE )
-        }
+                        no.cores=no.cores, verbose=FALSE)
+
         for( k in k.min:k.max ){
             kk <- k - k.min + 1
-            pred <- predict.prems( my.fit,
+            pred <- predict.prems(my.fit,
                                   newx=x[test,,drop=FALSE],
-                                  newx.fixed=x.fixed[test,,drop=FALSE],
-                                  size=k, criteria=criteria, fit=fit )
+                                  newx.fixed=x.fixed.test,
+                                  size=k, criteria=criteria)
+
             if( family=='binomial' ){
                 lp1 <- log(pred)
-                lp1 <- ifelse( is.finite(lp1), lp1, -1000 )
+                lp1 <- ifelse(is.finite(lp1), lp1, -1000)
                 lp0 <- log(1-pred)
-                lp0 <- ifelse( is.finite(lp0), lp0, -1000 )
-                pwll[i,kk] <- sum( y[test]*lp1 + (1-y[test])*lp0 )
-                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)[-1]
+                lp0 <- ifelse(is.finite(lp0), lp0, -1000)
+                pwll[i,kk] <- sum(y.test*lp1 + (1-y.test)*lp0)
             }else if( family=='gaussian' ){
-                pwll[i,kk] <- sum ( -( y[test] - pred )^2 )
-                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)[-1]
+                pwll[i,kk] <- sum(-(y.test-pred)^2)
             }else if( family=='cox' ){
-                pwll[i,kk] <- cox_pl_left_trunc( y[test], pred )
-                selected.coef[[k]][i,] = names(getModelFit( my.fit, size=k, rank=1 )$beta)
+                pwll[i,kk] <- cox_pl_left_trunc(y.test, pred)
             }
 
+            coef.names <- names(getModelFit(my.fit, size=k, rank=1, criteria=criteria)$beta)
+            selected <- setdiff(coef.names, c("I", my.fit$cnames.fixed))
+            selected.coef[[k]][i,] <- selected
         }
+
         if( verbose ){
             print(paste('Fold',i,'complete.'))
         }
     }
-    cvm <- apply( pwll, 2, mean )
-    cvsd <- apply( pwll, 2, sd )/sqrt(nfolds)
+
+    cvm <- apply(pwll, 2, mean)
+    cvsd <- apply(pwll, 2, sd)/sqrt(nfolds)
     names(cvm) <- k.min:k.max
     names(cvsd) <- k.min:k.max
 
-    sizes <- (k.min:k.max)[prems.optim( cvm, cvsd )]
+    sizes <- (k.min:k.max)[prems.optim(cvm, cvsd)]
 
-    ret <- list( sizes[1], sizes[2], cvm, cvsd, selected.coef )
-    names(ret) <- c('best','one.se','cvm','cvsd', 'selected.coef' )
-    return( ret )
+    ret <- list(sizes[1], sizes[2], cvm, cvsd, selected.coef)
+    names(ret) <- c('best','one.se','cvm','cvsd', 'selected.coef')
+    return(ret)
 }
 
 prems.optim <- function( cvm, cvsd ){
-    k <- 1:length(cvm)
-    best <- order(cvm,decreasing=TRUE)[1]
-    ptr2 <- which((cvm+cvsd[best])[1:(best-1)]>cvm[best])
-    if( length(ptr2)>0 ){
-        one.se <- min(ptr2)
-    }
-    if( length(ptr2)==0 ){
-        one.se <- best
+    best <- order(cvm, decreasing=TRUE)[1]
+    if( best == 1 ){
+        one.se <- 1
+    }else{
+        ptr2 <- which((cvm+cvsd[best])[seq_len(best-1)] > cvm[best])
+        if( length(ptr2)>0 ){
+            one.se <- min(ptr2)
+        }else{
+            one.se <- best
+        }
     }
     return(c(best,one.se))
 }
 
-new.optim <- function( cvm, cvsd ){
-    k <- 1:length(cvm)
-    one.se <- vector()
-    best <- order( cvm-cvsd, decreasing=TRUE )[1]
-    for( i in 1:best ){
-        ptr2 <- which((cvm+cvsd[i])[1:(i-1)]>cvm[i])
-        if( length(ptr2)>0 ){
-            one.se[i] <- k[min(ptr2)]
-        }
-        if( length(ptr2)==0 ){
-            one.se[i] <- i
-        }
-    }
-    best <- max(which(one.se==max(one.se)))
-    return(c(best,one.se[best]))
-}
-
 TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
-                   n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE ){
+                    n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE ){
+    n <- NROW(y)
     if( is.null(nfolds) ){
-        nfolds <- length(y)
+        nfolds <- n
+    }
+    if( is.null(x.fixed) ){
+        x.fixed <- matrix(nrow=n, ncol=0)
     }
     if( is.null(fit) ){
-        if( !is.null(x.fixed) ){
-            lambda.factor <- c( rep(0,ncol(x.fixed)), rep(1,ncol(x)) )
-        }else{
-            lambda.factor <- rep(1,ncol(x))
-            x.fixed <- matrix( ncol=0, nrow=length(y) )
-        }
-        fit <- cv.glmnet( x=as.matrix(cbind(x.fixed,x)), y=y, penalty.factor=lambda.factor,
-                     family=family, alpha=1, nfolds=nfolds,
-                     type.measure='deviance', grouped=FALSE, standardize=standardize,
-                     parallel=parallel )
+        lambda.factor <- c(rep(0,ncol(x.fixed)), rep(1,ncol(x)))
+        fit <- glmnet::cv.glmnet(x=as.matrix(cbind(x.fixed,x)), y=y,
+                      penalty.factor=lambda.factor,
+                      family=family, alpha=1, nfolds=nfolds,
+                      type.measure='deviance', grouped=FALSE, standardize=standardize,
+                      parallel=parallel)
     }
 
     ncol.fixed <- ncol(x.fixed)
 
-    if( fit$nzero[fit$index[1]] > 0 )
-        lambda.min <- fit$lambda.min
-    else
-        lambda.min <- fit$lambda[2]
-
-    beta <- getCoefGlmnet( fit, s=lambda.min )
-    if( ncol.fixed!=0 )
-        beta <- beta[-(1:ncol.fixed)]
-    
-    s <- rep(1,ncol(x))
-    if( standardize ){
-        ptr <- match( names(beta), colnames(x) )
-        s <- apply( x[,ptr,drop=FALSE], 2, sd )
+    remove.fixed <- function(beta) {
+        if( ncol.fixed == 0 ) return(beta)
+        fixed.names <- colnames(x.fixed)
+        if( !is.null(fixed.names) ){
+            return(beta[!names(beta) %in% fixed.names])
+        }
+        beta[-seq_len(min(ncol.fixed, length(beta)))]
     }
-    lambda <- lambda.min * length(y)
-    beta1 <- sort(abs(beta*s),decreasing=TRUE)
-    n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
-    ptr <- 1:n.coef
+
+    lambda.min <- fit$lambda.min
+    beta <- remove.fixed(getCoefGlmnet(fit, s=lambda.min))
+    if( length(beta) == 0 && length(fit$lambda) >= 2 ){
+        lambda.min <- fit$lambda[2]
+        beta <- remove.fixed(getCoefGlmnet(fit, s=lambda.min))
+    }
+    if( length(beta) == 0 ){
+        stop("No penalised predictors were selected by Lasso; tau cannot be estimated.")
+    }
+
+    s <- rep(1,length(beta))
+    if( standardize ){
+        ptr <- match(names(beta), colnames(x))
+        if( anyNA(ptr) ){
+            stop("Predictor names in the glmnet fit do not match colnames(x).")
+        }
+        s <- apply(x[,ptr,drop=FALSE], 2, sd)
+    }
+    lambda <- lambda.min * n
+    beta1 <- sort(abs(beta*s), decreasing=TRUE)
+    n.use <- min(n.coef, length(beta1))
+    ptr <- seq_len(n.use)
     tau.opt <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
 
-    beta <- getCoefGlmnet( fit, s='lambda.1se' )[-(1:ncol.fixed)]
+    beta <- remove.fixed(getCoefGlmnet(fit, s='lambda.1se'))
     if( length(beta) > 0 ){
         s <- rep(1,length(beta))
         if( standardize ){
-            ptr <- match( names(beta), colnames(x) )
-            s <- apply( x[,ptr,drop=FALSE], 2, sd )
+            ptr <- match(names(beta), colnames(x))
+            if( anyNA(ptr) ){
+                stop("Predictor names in the glmnet fit do not match colnames(x).")
+            }
+            s <- apply(x[,ptr,drop=FALSE], 2, sd)
         }
-        lambda <- fit$lambda.1se * length(y)
-        beta1 <- sort(abs(beta*s),decreasing=TRUE)
-        n.coef <- ifelse( n.coef>length(beta), length(beta), n.coef )
-        ptr <- 1:n.coef
+        lambda <- fit$lambda.1se * n
+        beta1 <- sort(abs(beta*s), decreasing=TRUE)
+        n.use <- min(n.coef, length(beta1))
+        ptr <- seq_len(n.use)
         tau.1se <- lambda * sum(beta1[ptr]) / sum(beta1[ptr]^2)
     }else{
         tau.1se <- NA
     }
 
-    ret <- list( tau.opt, tau.1se, fit )
+    ret <- list(tau.opt, tau.1se, fit)
     names(ret) <- c('tau.opt', 'tau.1se', 'fit.lasso')
     return(ret)
 }
@@ -1101,13 +756,13 @@ my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='ML' ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
-        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria, fit='mode' )
+        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria )
     }
 #    r <- matrix(ncol=3,nrow=length(sizes))
     r <- list()
     for( i in 1:length(sizes) ){
-        r[[i]] <- roc( y, my.pred[,i], ci=TRUE )
-#        r[i,] <- as.numeric(roc( y, my.pred[,i], ci=TRUE )$ci)
+        r[[i]] <- pROC::roc(y, my.pred[,i], ci=TRUE, quiet=TRUE)
+#        r[i,] <- as.numeric(pROC::roc(y, my.pred[,i], ci=TRUE, quiet=TRUE)$ci)
     }
     names(r) <- sizes
     return(r)
