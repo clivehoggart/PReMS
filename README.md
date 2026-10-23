@@ -27,7 +27,7 @@ install.packages("survival")
 source("prems.R")
 ```
 
-`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The optional `prems_parallel.R` command-line wrapper uses only base R in addition to the packages required by `prems.R`.
+`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The examples below use the R interface throughout. `prems_parallel.R` and `prems_cv_stopping_rule.R` also provide optional command-line wrappers for batch or HPC use.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -48,6 +48,7 @@ The Tecator and NKI70 data are downloaded directly in the examples below, so no 
 | `getModelFit()` | Extract a ranked fitted model of a specified size. |
 | `predict.prems()` | Generate predictions from a fitted PReMS model. |
 | `plot.cv.prems()` | Plot the cross-validation criterion against model size. |
+| `prems.cv.stop()` | Apply the paired blockwise stopping rule to fold-level CV scores. |
 
 The most important arguments are:
 
@@ -129,7 +130,7 @@ plot.cv.prems(cv.fit)
 
 Searching through size 15 places the observed optimum inside the evaluated range. The SPECTF CV curve nevertheless has a broad plateau around its optimum. With a small data set, the selected size can depend on the fold allocation, so repeated CV replicates are preferable when computation permits. Repeated CV was used for model-size selection in the benchmark analyses in the paper.
 
-For a faster exploratory run, reduce `max.s` or use a restricted two-predictor search such as `max2way = 50`.
+For a faster exploratory run, reduce `max.s` or use a restricted two-predictor search such as `max2way = 20`.
 
 ### 3. Fit a cross-validated Lasso for comparison
 
@@ -295,13 +296,13 @@ The predefined SPECTF test set is highly imbalanced, so AUC is more informative 
 
 ## Model-size selection and sequential stopping
 
-The largest useful model size is usually not known in advance. When computation is modest, the simplest approach is to search a broad range in one `cv.prems()` call, as in the SPECTF example above. For larger analyses, model sizes can instead be explored sequentially in blocks.
+When computation is modest, a broad range of model sizes can be searched in one `cv.prems()` call, as in the SPECTF example above. For more expensive analyses, model sizes can be explored sequentially in blocks.
 
-`prems_cv_stopping_rule.R` compares the best model in each new block with the current best model using paired differences in held-out CV score across folds. The search continues only if the new block improves mean predictive performance by more than one paired standard error. The defaults are blocks of 10 and a one-SE threshold.
+`prems.cv.stop()` compares the best model in each new block with the current best model using paired differences in held-out CV score across folds. The search continues only if the new block improves mean predictive performance by more than one paired standard error. The default block size is 10.
 
 ### SPECTF example in blocks of five
 
-The same SPECTF analysis can be rerun sequentially to illustrate the stopping rule. Use the same `foldid` throughout.
+Using the same folds as above, rerun the SPECTF CV analysis in blocks of five:
 
 ```r
 run.spectf.cv <- function(k.max) {
@@ -320,10 +321,38 @@ run.spectf.cv <- function(k.max) {
 }
 
 cv.fit <- run.spectf.cv(5)
-saveRDS(cv.fit, "spectf_cv.rds")
+stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
+stop.fit$adequate
+stop.fit$selected.size
 ```
 
-Apply the stopping rule from the command line:
+With only sizes 1--5 evaluated, `adequate` is `FALSE` because another complete block is required. Continue with sizes 1--10:
+
+```r
+cv.fit <- run.spectf.cv(10)
+stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
+stop.fit$comparisons
+stop.fit$adequate
+```
+
+If the second block improves by more than one paired SE, continue through size 15:
+
+```r
+cv.fit <- run.spectf.cv(15)
+stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
+stop.fit$selected.size
+stop.fit$adequate
+```
+
+The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally expensive.
+
+### Optional command-line wrapper
+
+A saved CV object can be passed to the same stopping rule from Bash:
+
+```r
+saveRDS(cv.fit, "spectf_cv.rds")
+```
 
 ```sh
 Rscript prems_cv_stopping_rule.R \
@@ -332,29 +361,68 @@ Rscript prems_cv_stopping_rule.R \
   --out-prefix spectf_cv
 ```
 
-With only sizes 1--5 evaluated, another complete block is required. Rerun through size 10 and apply the same command again:
-
-```r
-cv.fit <- run.spectf.cv(10)
-saveRDS(cv.fit, "spectf_cv.rds")
-```
-
-If the 6--10 block improves by more than one paired SE, continue through size 15:
-
-```r
-cv.fit <- run.spectf.cv(15)
-saveRDS(cv.fit, "spectf_cv.rds")
-```
-
-After each extension, rerun `prems_cv_stopping_rule.R`. The output reports the retained model size and whether the explored range is adequate.
-
-For large analyses, rerunning `cv.prems()` would refit all smaller model sizes. The parallel/checkpointed workflow below avoids this by extending saved fold-specific searches with `ModelSearchIncrease()`.
+The command-line script is a wrapper around `prems.cv.stop()`; it is not required for an interactive R analysis.
 
 ## Parallel cross-validation and model-size continuation
 
-For larger analyses, the supplied `prems_parallel.R` wrapper can distribute outer cross-validation folds across scheduler jobs and checkpoint searches so that completed model sizes do not need to be refitted. It also supports extending an existing full-data or fold-specific fit with `ModelSearchIncrease()`.
+For large searches, `prems_parallel.R` provides R functions for fitting CV folds independently, checkpointing completed model sizes and combining the fold-specific fits. Source it after `prems.R`:
 
-See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for a complete SPECTF example, including data preparation, an LSF array job, CV aggregation, application of the stopping rule, blockwise extension of the search and final model fitting.
+```r
+source("prems_parallel.R")
+```
+
+Create an analysis object containing the outcome, candidate predictors, optional fixed covariates and fold assignments:
+
+```r
+parallel.data <- list(
+  y = y.train,
+  x = x.train,
+  x.fixed = NULL,
+  family = "binomial",
+  foldid = foldid
+)
+```
+
+Fit one fold through model size 5:
+
+```r
+prems_parallel_fit(
+  data = parallel.data,
+  fold = 1,
+  out.file = "cv/spectf_fold1.rds",
+  initial.k = 5,
+  target.k = 5,
+  max.s = 50,
+  max2way = "all",
+  no.cores = 4
+)
+```
+
+The same function can be run independently for each fold. Existing fit files are continued rather than restarted, so extending a fold from size 5 to 10 only evaluates sizes 6--10:
+
+```r
+prems_parallel_fit(
+  data = parallel.data,
+  fold = 1,
+  out.file = "cv/spectf_fold1.rds",
+  target.k = 10,
+  max.s = 50,
+  no.cores = 4
+)
+```
+
+After all folds have completed, combine them in R:
+
+```r
+cv.fit <- prems_parallel_summarise(
+  data = parallel.data,
+  fit.template = "cv/spectf_fold{fold}.rds"
+)
+
+stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
+```
+
+For cluster execution, the same functions are exposed through the `prems_parallel.R` command-line wrapper and can be submitted as scheduler array jobs. See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for R and Bash/HPC examples.
 
 ## Example: Tecator meat spectroscopy data
 
