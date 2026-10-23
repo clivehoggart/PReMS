@@ -1,8 +1,10 @@
 # PReMS
 
+**Documentation:** [Main README](README.md) · [Parallel CV and model-size continuation](PARALLEL_CV.md)
+
 PReMS (Parallel Regularised Model Search) searches for sparse predictive models by combining regularised regression with a structured search over model space. The current implementation is supplied as an R script (`prems.R`).
 
-For each model size, PReMS ranks candidate models using an approximate marginal-likelihood score and retains the highest-ranking models for expansion to the next model size. Model size can then be chosen by cross-validation.
+For each model size, PReMS ranks candidate models using an approximate marginal-likelihood score and retains the highest-ranking models for expansion to the next model size. Model size is chosen by cross-validation. When the appropriate search range is not known in advance, PReMS can extend the search sequentially in blocks and use a paired cross-validation stopping rule to determine whether larger models need to be explored.
 
 ## Current scope
 
@@ -25,7 +27,7 @@ install.packages("survival")
 source("prems.R")
 ```
 
-`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux.
+`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The optional `prems_parallel.R` command-line wrapper uses only base R in addition to the packages required by `prems.R`.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -33,7 +35,7 @@ The SPECTF example uses `pROC` to calculate AUC:
 install.packages("pROC")
 ```
 
-The diabetes and NKI70 data are downloaded directly in the examples below, so the `lars` and `penalized` packages do not need to be installed. `pROC` is otherwise required only if the convenience functions `cv.auc()` or `my.auc()` are used. `gplots`, `igraph`, `MASS` and `exvatools` are not required by the current script.
+The Tecator and NKI70 data are downloaded directly in the examples below, so no additional R packages are needed to obtain these data. `pROC` is otherwise required only if the convenience functions `cv.auc()` or `my.auc()` are used. `gplots`, `igraph`, `MASS` and `exvatools` are not required by the current script.
 
 ## Main functions
 
@@ -111,7 +113,7 @@ cv.fit <- cv.prems(
   x = x.train,
   family = "binomial",
   k.min = 1,
-  k.max = 5,
+  k.max = 15,
   foldid = foldid,
   max2way = "all",
   max.s = 50,
@@ -125,7 +127,9 @@ cv.fit$one.se
 plot.cv.prems(cv.fit)
 ```
 
-For a faster exploratory run, reduce `max.s` or supply an integer such as `max2way = 20`. For higher-dimensional applications, evaluating all two-predictor models can become expensive and a restricted two-predictor search is generally more practical.
+Searching through size 15 places the observed optimum inside the evaluated range. The SPECTF CV curve nevertheless has a broad plateau around its optimum. With a small data set, the selected size can depend on the fold allocation, so repeated CV replicates are preferable when computation permits. Repeated CV was used for model-size selection in the benchmark analyses in the paper.
+
+For a faster exploratory run, reduce `max.s` or use a restricted two-predictor search such as `max2way = 50`.
 
 ### 3. Fit a cross-validated Lasso for comparison
 
@@ -154,8 +158,6 @@ c(
 )
 ```
 
-Equivalently, coefficients can be obtained directly from the cross-validation object with `coef(lasso.cv, s = "lambda.min")` and `coef(lasso.cv, s = "lambda.1se")`.
-
 ### 4. Fit PReMS to the complete training set
 
 Estimate `tau` on the full training data, then repeat the PReMS search using the same maximum model size considered during cross-validation.
@@ -177,7 +179,7 @@ fit <- prems(
   x = x.train,
   family = "binomial",
   tau = tau,
-  k.max = 5,
+  k.max = 15,
   max2way = "all",
   max.s = 50,
   no.cores = 4,
@@ -202,22 +204,11 @@ selected.model <- getModelFit(
 selected.model$beta
 ```
 
-The returned coefficient vector contains the intercept (`I`) followed by the selected predictors. Alternative high-ranking models of the same size can be inspected by increasing `rank`.
-
-```r
-second.model <- getModelFit(
-  fit,
-  size = selected.size,
-  rank = 2,
-  criteria = "ML"
-)
-
-second.model$beta
-```
+The returned coefficient vector contains the intercept (`I`) followed by the selected predictors. Increase `rank` to inspect alternative high-ranking models of the same size.
 
 ### 6. Extend an existing search to a larger model size
 
-`ModelSearchIncrease()` can be used when a fitted search should be extended by one additional model size without repeating the searches already completed. For example, the fit above searched models of sizes 1--5. The following extends it to size 6:
+`ModelSearchIncrease()` can be used when a fitted search should be extended by one additional model size without repeating the searches already completed. For example, the fit above searched models of sizes 1--15. The following extends it to size 16:
 
 ```r
 fit <- ModelSearchIncrease(
@@ -227,17 +218,17 @@ fit <- ModelSearchIncrease(
   no.cores = 4
 )
 
-size6.model <- getModelFit(
+size16.model <- getModelFit(
   fit,
-  size = 6,
+  size = 16,
   rank = 1,
   criteria = "ML"
 )
 
-size6.model$beta
+size16.model$beta
 ```
 
-By default, `ModelSearchIncrease()` uses the number of models retained at the current largest model size to determine the breadth of the expansion. Supply `max.s` explicitly to use a different number. Each call adds one additional model size, so the function can be called repeatedly if a search needs to be extended further.
+Each call to `ModelSearchIncrease()` adds one model size. By default it retains the same search breadth as the current largest size; supply `max.s` to override this.
 
 ### 7. Compare PReMS and Lasso in the independent test set
 
@@ -299,34 +290,99 @@ comparison <- data.frame(
 comparison
 ```
 
-The predefined SPECTF test set is highly imbalanced, so AUC is more informative than raw classification accuracy for this example. The comparison is intended to illustrate the PReMS workflow and its sparsity relative to a standard Lasso analysis rather than to provide a definitive benchmark based on a single small data set.
+The predefined SPECTF test set is highly imbalanced, so AUC is more informative than raw accuracy here. This is a workflow example rather than a definitive benchmark.
 
 
-## Example: Efron et al. diabetes data
+## Model-size selection and sequential stopping
 
-The diabetes data used by Efron et al. (2004) provide a compact example with a continuous outcome. The `lars` package contains 442 individuals, a continuous measure of diabetes progression (`y`) and two predictor matrices: `x` contains the 10 original baseline measurements, while `x2` contains 64 main-effect, quadratic and interaction terms. The 64-predictor `x2` matrix is used here because it provides a more informative sparse-model search example.
+The largest useful model size is usually not known in advance. When computation is modest, the simplest approach is to search a broad range in one `cv.prems()` call, as in the SPECTF example above. For larger analyses, model sizes can instead be explored sequentially in blocks.
 
-Unlike SPECTF Heart, these data do not have a predefined training and test split. The example therefore creates an 80% training set and reserves the remaining 20% for independent evaluation.
+`prems_cv_stopping_rule.R` compares the best model in each new block with the current best model using paired differences in held-out CV score across folds. The search continues only if the new block improves mean predictive performance by more than one paired standard error. The defaults are blocks of 10 and a one-SE threshold.
 
-### 1. Download, load and split the data
+### SPECTF example in blocks of five
 
-The exact `diabetes` object distributed with the `lars` package can be downloaded directly from the read-only CRAN package mirror on GitHub:
+The same SPECTF analysis can be rerun sequentially to illustrate the stopping rule. Use the same `foldid` throughout.
 
 ```r
-diabetes.url <- paste0(
-  "https://github.com/cran/lars/raw/refs/heads/master/",
-  "data/diabetes.RData"
+run.spectf.cv <- function(k.max) {
+  cv.prems(
+    y = y.train,
+    x = x.train,
+    family = "binomial",
+    k.min = 1,
+    k.max = k.max,
+    foldid = foldid,
+    max2way = "all",
+    max.s = 50,
+    no.cores = 4,
+    criteria = "ML"
+  )
+}
+
+cv.fit <- run.spectf.cv(5)
+saveRDS(cv.fit, "spectf_cv.rds")
+```
+
+Apply the stopping rule from the command line:
+
+```sh
+Rscript prems_cv_stopping_rule.R \
+  --cv spectf_cv.rds \
+  --block-size 5 \
+  --out-prefix spectf_cv
+```
+
+With only sizes 1--5 evaluated, another complete block is required. Rerun through size 10 and apply the same command again:
+
+```r
+cv.fit <- run.spectf.cv(10)
+saveRDS(cv.fit, "spectf_cv.rds")
+```
+
+If the 6--10 block improves by more than one paired SE, continue through size 15:
+
+```r
+cv.fit <- run.spectf.cv(15)
+saveRDS(cv.fit, "spectf_cv.rds")
+```
+
+After each extension, rerun `prems_cv_stopping_rule.R`. The output reports the retained model size and whether the explored range is adequate.
+
+For large analyses, rerunning `cv.prems()` would refit all smaller model sizes. The parallel/checkpointed workflow below avoids this by extending saved fold-specific searches with `ModelSearchIncrease()`.
+
+## Parallel cross-validation and model-size continuation
+
+For larger analyses, the supplied `prems_parallel.R` wrapper can distribute outer cross-validation folds across scheduler jobs and checkpoint searches so that completed model sizes do not need to be refitted. It also supports extending an existing full-data or fold-specific fit with `ModelSearchIncrease()`.
+
+See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for a complete SPECTF example, including data preparation, an LSF array job, CV aggregation, application of the stopping rule, blockwise extension of the search and final model fitting.
+
+## Example: Tecator meat spectroscopy data
+
+The Tecator data provide a compact continuous-outcome example with a predictor structure closer to high-dimensional molecular data. The data contain 215 meat samples, each measured for absorbance at 100 wavelengths between 850 and 1050 nm. Fat, water and protein percentages were measured by analytic chemistry. Here the 100 raw absorbance measurements are candidate predictors and fat percentage is the continuous outcome.
+
+The predictors are measurements of the same underlying spectrum and are therefore strongly correlated, making the data useful for illustrating sparse selection among correlated predictors. The first 129 samples were originally used as a training set; this example retains that historical split and uses the remaining 86 samples for independent evaluation.
+
+### 1. Download, load and prepare the data
+
+The `tecator` object distributed with the `fda.usc` package can be downloaded directly from the package's GitHub repository; `fda.usc` itself does not need to be installed.
+
+```r
+tecator.url <- paste0(
+  "https://github.com/moviedo5/fda.usc/raw/refs/heads/master/",
+  "data/tecator.rda"
 )
 
-download.file(diabetes.url, "diabetes.RData", mode = "wb")
-load("diabetes.RData")
+download.file(tecator.url, "tecator.rda", mode = "wb")
+load("tecator.rda")
 
-x <- as.matrix(diabetes$x2)
-y <- diabetes$y
+x <- as.matrix(tecator$absorp.fdata$data)
+y <- tecator$y$Fat
 
-set.seed(1)
-train.id <- sample(seq_len(nrow(x)), size = floor(0.8 * nrow(x)))
-test.id <- setdiff(seq_len(nrow(x)), train.id)
+# Give the spectral predictors informative, unique names.
+colnames(x) <- paste0("wl_", tecator$absorp.fdata$argvals)
+
+train.id <- 1:129
+test.id <- 130:nrow(x)
 
 x.train <- x[train.id, , drop = FALSE]
 y.train <- y[train.id]
@@ -335,11 +391,14 @@ x.test <- x[test.id, , drop = FALSE]
 y.test <- y[test.id]
 ```
 
+Only the absorbance measurements are used as predictors. Water and protein percentage are not included because, like fat percentage, they are laboratory-measured composition outcomes rather than spectral predictors.
+
 ### 2. Select PReMS model size by cross-validation
 
-Use the same fold assignments for PReMS and Lasso.
+Use the same fold assignments for PReMS and Lasso. With 100 candidate predictors, an exhaustive search of all two-predictor models is possible but makes a README example unnecessarily slow. Here `max2way = 20` expands the 20 highest-ranking one-predictor models when constructing the initial two-predictor search.
 
 ```r
+set.seed(1)
 foldid <- make.folds.continuous(length(y.train), folds = 10)
 
 cv.fit <- cv.prems(
@@ -349,7 +408,7 @@ cv.fit <- cv.prems(
   k.min = 1,
   k.max = 10,
   foldid = foldid,
-  max2way = "all",
+  max2way = 20,
   max.s = 50,
   no.cores = 4,
   criteria = "ML"
@@ -361,7 +420,7 @@ cv.fit$one.se
 plot.cv.prems(cv.fit)
 ```
 
-With 64 predictors, an exhaustive two-predictor search remains manageable. For substantially larger predictor sets, use an integer value for `max2way` to restrict the initial search.
+Set `max2way = "all"` if an exhaustive search of all two-predictor models is preferred.
 
 ### 3. Fit Lasso for comparison
 
@@ -401,13 +460,14 @@ fit <- prems(
   family = "gaussian",
   tau = tau.fit$tau.opt,
   k.max = 10,
-  max2way = "all",
+  max2way = 20,
   max.s = 50,
   no.cores = 4,
   standardize = TRUE
 )
 
 selected.size <- cv.fit$best
+
 selected.model <- getModelFit(
   fit,
   size = selected.size,
@@ -418,9 +478,11 @@ selected.model <- getModelFit(
 selected.model$beta
 ```
 
+The selected predictor names correspond to wavelengths, which makes it straightforward to inspect whether alternative high-ranking models select nearby, highly correlated parts of the spectrum.
+
 ### 5. Compare prediction in the independent test set
 
-For a continuous outcome, predictive performance can be summarised using root mean squared error (RMSE) and squared Pearson correlation (`R2`).
+For a continuous outcome, predictive performance is summarised here using root mean squared error (RMSE) and squared Pearson correlation (`R2`).
 
 ```r
 prems.pred <- as.numeric(
@@ -471,7 +533,7 @@ comparison <- data.frame(
 comparison
 ```
 
-Because the train/test split is generated randomly, exact results will depend on the split. Setting the random seed makes the example reproducible.
+Because the historical test set is not used for either model search or tuning, it provides a direct held-out comparison of PReMS and Lasso. The purpose of this example is to demonstrate continuous-outcome analysis and sparse selection in the presence of correlated predictors, rather than to treat individual wavelengths as independent biological signals.
 
 ## Example: NKI70 breast-cancer survival data
 
