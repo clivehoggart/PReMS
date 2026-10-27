@@ -12,7 +12,7 @@ The current script supports Gaussian, binomial and Cox
 proportional-hazards outcomes. Models are searched using `prems()` and
 model size is selected using `cv.prems()`.
 
-For binary outcomes, `y` must be coded `0/1`. For Cox models, `y` should be a `survival::Surv` object; both ordinary right-censored `Surv(time, status)` responses and counting-process `Surv(start, stop, status)` responses are supported. Predictor matrices should be numeric, contain no missing values and have unique column names. Prediction data must use the same predictor names as the training data.
+For binary outcomes, `y` is coded `0/1`. For Cox models, `y` should be a `survival::Surv` object; both ordinary right-censored `Surv(time, status)` responses and counting-process `Surv(start, stop, status)` responses are supported. Predictor matrices should be numeric, contain no missing values and have unique column names. Prediction data must use the same predictor names as the training data.
 
 ## Installation
 

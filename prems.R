@@ -1,7 +1,8 @@
 # PReMS dependencies
-library(parallel)
-library(glmnet)
-library(pROC)
+# Required: glmnet
+# Required for family = "cox": survival
+# Optional (only for cv.auc() and my.auc()): pROC
+# The parallel package is distributed with R and is called explicitly below.
 
 
 cox_pl_left_trunc <- function( Surv_obj, eta ) {
@@ -187,8 +188,6 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
         beta.tilde <- tmp$par
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
         logPost <- -tmp$value
-#            hess <- getHessian2( x1, beta.tilde, tau1 )
-#            l.gamma1 <- logPost - 0.5*log(det(hess))
         logdetH <- getHessian_gpt( x1, beta.tilde, tau1 )
         l.gamma1 <- logPost - 0.5 * logdetH
         eta <- getEta( yy, x1, beta.tilde )
@@ -648,6 +647,9 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         }
     }
 
+    colnames(pwll) <- as.character(k.min:k.max)
+    rownames(pwll) <- paste0("fold", seq_len(nfolds))
+
     cvm <- apply(pwll, 2, mean)
     cvsd <- apply(pwll, 2, sd)/sqrt(nfolds)
     names(cvm) <- k.min:k.max
@@ -655,8 +657,15 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
 
     sizes <- (k.min:k.max)[prems.optim(cvm, cvsd)]
 
-    ret <- list(sizes[1], sizes[2], cvm, cvsd, selected.coef)
-    names(ret) <- c('best','one.se','cvm','cvsd', 'selected.coef')
+    ret <- list(
+        best=sizes[1],
+        one.se=sizes[2],
+        cvm=cvm,
+        cvsd=cvsd,
+        selected.coef=selected.coef,
+        pwll=pwll,
+        foldid=foldid
+    )
     return(ret)
 }
 
@@ -674,6 +683,150 @@ prems.optim <- function( cvm, cvsd ){
     }
     return(c(best,one.se))
 }
+
+
+prems.cv.stop <- function( cv.fit, block.size=10, se.multiplier=1,
+                           require.complete.block=TRUE ){
+    fold.scores <- cv.fit$pwll
+    if( is.null(fold.scores) )
+        fold.scores <- cv.fit$fold_scores
+    if( is.null(fold.scores) )
+        stop("cv.fit must contain fold-level scores in $pwll or $fold_scores.")
+
+    fold.scores <- as.matrix(fold.scores)
+    if( nrow(fold.scores) < 2 )
+        stop("At least two CV folds are required.")
+    if( any(!is.finite(fold.scores)) )
+        stop("Fold-level CV scores contain missing or non-finite values.")
+    if( length(block.size)!=1L || !is.finite(block.size) ||
+        block.size<1 || block.size!=as.integer(block.size) )
+        stop("block.size must be a positive integer.")
+    if( length(se.multiplier)!=1L || !is.finite(se.multiplier) ||
+        se.multiplier<0 )
+        stop("se.multiplier must be non-negative.")
+
+    if( is.null(colnames(fold.scores)) ){
+        model.size <- seq_len(ncol(fold.scores))
+    }else{
+        model.size <- suppressWarnings(as.integer(colnames(fold.scores)))
+        if( anyNA(model.size) )
+            stop("Column names of fold-level CV scores must be model sizes.")
+    }
+
+    ord <- order(model.size)
+    model.size <- model.size[ord]
+    fold.scores <- fold.scores[,ord,drop=FALSE]
+    if( anyDuplicated(model.size) )
+        stop("Model sizes are duplicated.")
+    if( !identical(model.size, seq.int(min(model.size), max(model.size))) )
+        stop("Model sizes must form a contiguous sequence.")
+
+    mean.score <- colMeans(fold.scores)
+    names(mean.score) <- model.size
+    block.id <- ((model.size-min(model.size)) %/% block.size) + 1L
+    blocks <- split(model.size, block.id)
+
+    first.block <- blocks[[1]]
+    current.size <- first.block[which.max(mean.score[as.character(first.block)])]
+    current.mean <- mean.score[as.character(current.size)]
+
+    comparisons <- data.frame(
+        block=integer(), block_start=integer(), block_end=integer(),
+        block_complete=logical(), previous_size=integer(),
+        candidate_size=integer(), previous_mean=numeric(),
+        candidate_mean=numeric(), mean_difference=numeric(),
+        se_difference=numeric(), threshold=numeric(), improves=logical(),
+        stringsAsFactors=FALSE
+    )
+
+    if( length(blocks)==1L ){
+        return(list(
+            selected.size=current.size,
+            selected.mean=current.mean,
+            adequate=FALSE,
+            reason="Only the initial block has been evaluated; another block is required.",
+            comparisons=comparisons,
+            mean.score=mean.score
+        ))
+    }
+
+    for( b in 2:length(blocks) ){
+        this.block <- blocks[[b]]
+        candidate.size <- this.block[which.max(mean.score[as.character(this.block)])]
+        candidate.mean <- mean.score[as.character(candidate.size)]
+        d <- fold.scores[,as.character(candidate.size)] -
+             fold.scores[,as.character(current.size)]
+        mean.d <- mean(d)
+        se.d <- stats::sd(d)/sqrt(length(d))
+        threshold <- se.multiplier*se.d
+        improves <- mean.d > threshold
+        expected.block.end <- min(model.size) + b*block.size - 1L
+        block.complete <- max(this.block) >= expected.block.end
+
+        comparisons <- rbind(comparisons, data.frame(
+            block=b,
+            block_start=min(this.block),
+            block_end=max(this.block),
+            block_complete=block.complete,
+            previous_size=current.size,
+            candidate_size=candidate.size,
+            previous_mean=current.mean,
+            candidate_mean=candidate.mean,
+            mean_difference=mean.d,
+            se_difference=se.d,
+            threshold=threshold,
+            improves=improves,
+            stringsAsFactors=FALSE
+        ))
+
+        if( improves ){
+            current.size <- candidate.size
+            current.mean <- candidate.mean
+            if( b==length(blocks) ){
+                return(list(
+                    selected.size=current.size,
+                    selected.mean=current.mean,
+                    adequate=FALSE,
+                    reason=paste0(
+                        "The best model in the final block improved by more than ",
+                        se.multiplier,
+                        " paired SE; another block should be explored."
+                    ),
+                    comparisons=comparisons,
+                    mean.score=mean.score
+                ))
+            }
+        }else{
+            if( require.complete.block && !block.complete ){
+                return(list(
+                    selected.size=current.size,
+                    selected.mean=current.mean,
+                    adequate=FALSE,
+                    reason="The final block is incomplete; complete the block before stopping.",
+                    comparisons=comparisons,
+                    mean.score=mean.score
+                ))
+            }
+            return(list(
+                selected.size=current.size,
+                selected.mean=current.mean,
+                adequate=TRUE,
+                reason=paste0(
+                    "The best model in block ", b,
+                    " did not improve predictive performance by more than ",
+                    se.multiplier, " paired SE."
+                ),
+                comparisons=comparisons,
+                mean.score=mean.score
+            ))
+        }
+    }
+
+    stop("Unexpected end of stopping-rule calculation.")
+}
+
+# Backwards-compatible name used by earlier development scripts.
+apply_cv_prems_parallel_stopping_rule <- prems.cv.stop
 
 TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
                     n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE ){
