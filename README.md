@@ -4,11 +4,13 @@
 
 PReMS (Parallel Regularised Model Search) searches for sparse predictive models by combining regularised regression with a structured search over model space. The current implementation is supplied as an R script (`prems.R`).
 
-For each model size, PReMS ranks candidate models using an approximate marginal-likelihood score and retains the highest-ranking models for expansion to the next model size. Model size is chosen by cross-validation. When the appropriate search range is not known in advance, PReMS can extend the search sequentially in blocks and use a paired cross-validation stopping rule to determine whether larger models need to be explored.
+For each model size, PReMS ranks candidate models by the marginal-likelihood and retains the highest-ranking models for expansion to the next model size. Model size is chosen by cross-validation. When the appropriate search range is not known in advance, PReMS can extend the search sequentially in blocks and use a paired cross-validation stopping rule to determine whether larger models need to be explored.
 
 ## Current scope
 
-The current script supports Gaussian, binomial and Cox proportional-hazards outcomes. Candidate models are ranked by the PReMS model-search criterion (`criteria = "ML"`), and model size can be selected using `cv.prems()`.
+The current script supports Gaussian, binomial and Cox
+proportional-hazards outcomes. Models are searched using `prems()` and
+model size is selected using `cv.prems()`.
 
 For binary outcomes, `y` must be coded `0/1`. For Cox models, `y` should be a `survival::Surv` object; both ordinary right-censored `Surv(time, status)` responses and counting-process `Surv(start, stop, status)` responses are supported. Predictor matrices should be numeric, contain no missing values and have unique column names. Prediction data must use the same predictor names as the training data.
 
