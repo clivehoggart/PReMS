@@ -29,7 +29,7 @@ install.packages("survival")
 source("prems.R")
 ```
 
-`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The examples below use the R interface throughout. `prems_parallel.R` and `prems_cv_stopping_rule.R` also provide optional command-line wrappers for batch or HPC use.
+`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. PReMS calls `parallel::mclapply()` explicitly. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The examples below use the R interface throughout. Parallel cross-validation across HPC jobs is documented separately in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -348,83 +348,9 @@ stop.fit$adequate
 
 The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally expensive.
 
-### Optional command-line wrapper
+## Parallel cross-validation on HPC
 
-A saved CV object can be passed to the same stopping rule from Bash:
-
-```r
-saveRDS(cv.fit, "spectf_cv.rds")
-```
-
-```sh
-Rscript prems_cv_stopping_rule.R \
-  --cv spectf_cv.rds \
-  --block-size 5 \
-  --out-prefix spectf_cv
-```
-
-The command-line script is a wrapper around `prems.cv.stop()`; it is not required for an interactive R analysis.
-
-## Parallel cross-validation and model-size continuation
-
-For large searches, `prems_parallel.R` provides R functions for fitting CV folds independently, checkpointing completed model sizes and combining the fold-specific fits. Source it after `prems.R`:
-
-```r
-source("prems_parallel.R")
-```
-
-Create an analysis object containing the outcome, candidate predictors, optional fixed covariates and fold assignments:
-
-```r
-parallel.data <- list(
-  y = y.train,
-  x = x.train,
-  x.fixed = NULL,
-  family = "binomial",
-  foldid = foldid
-)
-```
-
-Fit one fold through model size 5:
-
-```r
-prems_parallel_fit(
-  data = parallel.data,
-  fold = 1,
-  out.file = "cv/spectf_fold1.rds",
-  initial.k = 5,
-  target.k = 5,
-  max.s = 50,
-  max2way = "all",
-  no.cores = 4
-)
-```
-
-The same function can be run independently for each fold. Existing fit files are continued rather than restarted, so extending a fold from size 5 to 10 only evaluates sizes 6--10:
-
-```r
-prems_parallel_fit(
-  data = parallel.data,
-  fold = 1,
-  out.file = "cv/spectf_fold1.rds",
-  target.k = 10,
-  max.s = 50,
-  no.cores = 4
-)
-```
-
-After all folds have completed, combine them in R:
-
-```r
-cv.fit <- prems_parallel_summarise(
-  data = parallel.data,
-  fit.template = "cv/spectf_fold{fold}.rds"
-)
-
-stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
-```
-
-For cluster execution, the same functions are exposed through the `prems_parallel.R` command-line wrapper and can be submitted as scheduler array jobs. See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for R and Bash/HPC examples.
+For large analyses, cross-validation folds can be fitted independently and model searches checkpointed and continued on an HPC system. See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for the batch/HPC workflow.
 
 ## Example: Tecator meat spectroscopy data
 
