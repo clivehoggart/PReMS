@@ -90,8 +90,8 @@ feature.names <- as.vector(rbind(
   paste0("F", 1:22, "S")
 ))
 
-train <- read.csv("SPECTF.train", header = FALSE)
-test  <- read.csv("SPECTF.test",  header = FALSE)
+train <- read.csv("data/SPECTF.train", header = FALSE)
+test  <- read.csv("data/SPECTF.test",  header = FALSE)
 
 colnames(train) <- c("diagnosis", feature.names)
 colnames(test)  <- c("diagnosis", feature.names)
