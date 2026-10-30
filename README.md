@@ -331,7 +331,7 @@ stop.fit$selected.size
 
 `return.fits = TRUE` retains the fold-specific PReMS searches needed for continuation. If another block is required, pass the returned object back to `cv.prems()`. The following extends each fold from size 5 to size 10; sizes 1--5 are not refitted:
 
-**RAM usage:** retaining fold fits can make a `cv.prems` object large because it stores the complete PReMS search for every CV fold. The default is therefore `return.fits = FALSE`. Set it to `TRUE` only when continuation is required, particularly for analyses with large `max.s` or searches extending to many model sizes.
+**RAM usage:** retaining fold fits can make a `cv.prems` object large because it stores the complete PReMS search for every CV fold. The default is therefore `return.fits = FALSE`. Set it to `TRUE` only when continuation is required.
 
 ```r
 cv.fit <- cv.prems(
