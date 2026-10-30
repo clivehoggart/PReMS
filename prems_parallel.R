@@ -195,15 +195,20 @@ prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
     if( target.k>usable )
         stop("target.k exceeds the number of non-constant candidate predictors (", usable, ").")
 
-    while( current.k<target.k ){
-        if( verbose ) message("Extending search to model size ", current.k+1L, ".")
+    if( current.k<target.k ){
+        if( verbose ) message("Extending search from model size ", current.k,
+                              " through model size ", target.k, ".")
+        checkpoint <- function(fitted.models, k) {
+            saveRDS(fitted.models, out.file)
+            if( verbose ) message("Model size ", k, " checkpointed.")
+            invisible(NULL)
+        }
         fit <- ModelSearchIncrease(
             fitted.models=fit, y=y, x=x, x.fixed=x.fixed,
-            no.cores=no.cores, max.s=max.s
+            k.max=target.k, no.cores=no.cores, max.s=max.s,
+            verbose=FALSE, checkpoint=checkpoint
         )
         current.k <- length(fit$fitted.models)
-        saveRDS(fit, out.file)
-        if( verbose ) message("Model size ", current.k, " checkpointed.")
     }
     invisible(fit)
 }

@@ -5,6 +5,8 @@
 # The parallel package is distributed with R and is called explicitly below.
 
 
+
+
 cox_pl_left_trunc <- function( Surv_obj, eta ) {
     if( length(eta) != nrow(Surv_obj) ) stop("eta and surv must be same length")
 
@@ -124,6 +126,8 @@ getHessian_gpt <- function( x, beta, tau ){# In matrix notation
     return(logdetH)
 }
 
+
+
 expand.model <- function( old.model, P ){
   k <- length(old.model) + 1
   gamma <- setdiff( 1:P, old.model )
@@ -188,6 +192,7 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
         beta.tilde <- tmp$par
         # Log-posterior is NEGATIVE of value which is returned by optim -- by default optim minimises
         logPost <- -tmp$value
+#            l.gamma1 <- logPost - 0.5*log(det(hess))
         logdetH <- getHessian_gpt( x1, beta.tilde, tau1 )
         l.gamma1 <- logPost - 0.5 * logdetH
         eta <- getEta( yy, x1, beta.tilde )
@@ -378,7 +383,30 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5,
     return( ret )
 }
 
-ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10, max.s=NULL ){
+ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, k.max=NULL,
+                                 no.cores=10, max.s=NULL, verbose=TRUE,
+                                 checkpoint=NULL ){
+    current.k <- length(fitted.models$fitted.models)
+    if( is.null(k.max) )
+        k.max <- current.k + 1L
+    if( length(k.max)!=1L || !is.finite(k.max) || k.max!=as.integer(k.max) )
+        stop("k.max must be a single integer.")
+    k.max <- as.integer(k.max)
+    if( k.max < current.k )
+        stop("k.max cannot be smaller than the largest model size already fitted (", current.k, ").")
+    if( k.max == current.k )
+        return(fitted.models)
+    if( no.cores < 1 )
+        stop("no.cores must be at least 1.")
+    if( !is.null(max.s) ){
+        if( length(max.s)!=1L || !is.finite(max.s) || max.s<1 || max.s!=as.integer(max.s) )
+            stop("max.s must be a positive integer or NULL.")
+        max.s <- as.integer(max.s)
+    }
+    if( !is.null(checkpoint) && !is.function(checkpoint) )
+        stop("checkpoint must be NULL or a function.")
+
+    # Standardise once before extending through all requested model sizes.
     x <- t(t(x)-fitted.models$m)
     x <- t(t(x)/fitted.models$sd)
 
@@ -397,51 +425,62 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, no.cores=10,
         y.fit <- y
     }
 
-    k <- length(fitted.models$fitted.models)
-    ptr.covs.use <- which( fitted.models$sd!=0 )
+    ptr.covs.use <- which(fitted.models$sd!=0)
     Ncov <- length(ptr.covs.use)
+    if( k.max > Ncov )
+        stop("k.max exceeds the number of non-constant candidate predictors (", Ncov, ").")
 
-    # By default preserve the search breadth retained at the current largest
-    # model size. max.s can be supplied explicitly to widen or narrow expansion.
-    if( is.null(max.s) ){
-        max.s <- length(fitted.models$fitted.models[[k]])
+    while( current.k < k.max ){
+        k <- current.k
+
+        # When max.s is omitted, preserve the breadth actually retained at the
+        # current largest model size. This matches repeated one-step calls.
+        max.s.use <- if( is.null(max.s) )
+            length(fitted.models$fitted.models[[k]]) else max.s
+
+        ML <- unlist(parallel::mclapply(
+            fitted.models$fitted.models[[k]], getElement, 'ML', mc.cores=no.cores
+        ))
+
+        next.k <- k + 1L
+        fitted.models$model.indicator[[next.k]] <- stepUP(
+            fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s.use
+        )
+
+        fitted.models$fitted.models[[next.k]] <- parallel::mclapply(
+            seq_len(nrow(fitted.models$model.indicator[[next.k]])),
+            function(i){
+                getMargLikelihood2(
+                    x.select=x[,ptr.covs.use[fitted.models$model.indicator[[next.k]][i,]],drop=FALSE],
+                    x.fixed=x.fixed,
+                    y=y.fit, family=fitted.models$family,
+                    tau=fitted.models$tau,
+                    m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[next.k]][i,]]],
+                    sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[next.k]][i,]]],
+                    m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed,
+                    m.y=m.y, s.y=s.y
+                )
+            },
+            mc.cores=no.cores
+        )
+
+        # Keep the highest-ranking models, matching the behaviour of prems().
+        ML.new <- unlist(parallel::mclapply(
+            fitted.models$fitted.models[[next.k]], getElement, 'ML', mc.cores=no.cores
+        ))
+        s <- order(ML.new, decreasing=FALSE)
+        n.keep <- min(max.s.use, length(s))
+        keep <- s[seq_len(n.keep)]
+
+        fitted.models$fitted.models[[next.k]] <- fitted.models$fitted.models[[next.k]][keep]
+        fitted.models$model.indicator[[next.k]] <- fitted.models$model.indicator[[next.k]][keep,,drop=FALSE]
+
+        current.k <- next.k
+        if( verbose )
+            print(paste("Model size", current.k, "complete."))
+        if( !is.null(checkpoint) )
+            checkpoint(fitted.models, current.k)
     }
-
-    ML <- unlist(parallel::mclapply(
-        fitted.models$fitted.models[[k]], getElement, 'ML', mc.cores=no.cores
-    ))
-
-    fitted.models$model.indicator[[k+1]] <- stepUP(
-        fitted.models$model.indicator[[k]], Ncov, ML, max.s=max.s
-    )
-
-    fitted.models$fitted.models[[k+1]] <- parallel::mclapply(
-        seq_len(nrow(fitted.models$model.indicator[[k+1]])),
-        function(i){
-            getMargLikelihood2(
-                x.select=x[,ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]],drop=FALSE],
-                x.fixed=x.fixed,
-                y=y.fit, family=fitted.models$family,
-                tau=fitted.models$tau,
-                m1=fitted.models$m[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                sd1=fitted.models$sd[ptr.covs.use[fitted.models$model.indicator[[k+1]][i,]]],
-                m.fixed=fitted.models$m.fixed, sd.fixed=fitted.models$sd.fixed,
-                m.y=m.y, s.y=s.y
-            )
-        },
-        mc.cores=no.cores
-    )
-
-    # Keep the highest-ranking models, matching the behaviour of prems().
-    ML.new <- unlist(parallel::mclapply(
-        fitted.models$fitted.models[[k+1]], getElement, 'ML', mc.cores=no.cores
-    ))
-    s <- order(ML.new, decreasing=FALSE)
-    n.keep <- min(max.s, length(s))
-    keep <- s[seq_len(n.keep)]
-
-    fitted.models$fitted.models[[k+1]] <- fitted.models$fitted.models[[k+1]][keep]
-    fitted.models$model.indicator[[k+1]] <- fitted.models$model.indicator[[k+1]][keep,,drop=FALSE]
 
     return(fitted.models)
 }
@@ -530,38 +569,18 @@ getICs <- function( fitted.models, k.min=1 ){
 
 cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
                       max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
-                      lasso.factor=1, criteria='ML', family='binomial', verbose=TRUE ){
+                      lasso.factor=1, criteria='ML', family='binomial', verbose=TRUE,
+                      cv.fit=NULL, return.fits=FALSE ){
     n <- NROW(y)
-
-    if( is.null(foldid) & is.null(nfolds) ){
-        nfolds <- n
-        foldid <- seq_len(nfolds)
-    }
-    if( !is.null(foldid) & is.null(nfolds) ){
-        nfolds <- length(unique(foldid))
-    }
-    if( is.null(foldid) ){
-        yy <- y
-        if( family=="cox" )
-            yy <- y[,ncol(y)]
-        if( family=="cox" | family=="binomial" ){
-            foldid <- make.folds2(yy, folds=nfolds)
-            if( verbose ) print(table(yy, foldid))
-        }
-        if( family=="gaussian" ){
-            foldid <- make.folds.continuous(n, nfolds)
-            if( verbose ) print(table(foldid))
-        }
-    }
-
-    pwll <- matrix(nrow=nfolds, ncol=(k.max-k.min+1))
-    if( verbose ){
-        print(paste(nfolds,'fold cross-validation'))
-    }
-    selected.coef <- vector("list", k.max)
-    for( k in k.min:k.max ){
-        selected.coef[[k]] <- matrix(nrow=nfolds, ncol=k)
-    }
+    continuing <- !is.null(cv.fit)
+    k.min.missing <- missing(k.min)
+    max.s.missing <- missing(max.s)
+    family.missing <- missing(family)
+    criteria.missing <- missing(criteria)
+    standardize.missing <- missing(standardize)
+    return.fits.missing <- missing(return.fits)
+    foldid.supplied <- !is.null(foldid)
+    nfolds.supplied <- !is.null(nfolds)
 
     subset_y <- function(y, idx) {
         if( family == "cox" ){
@@ -569,6 +588,158 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         }else{
             y[idx]
         }
+    }
+
+    if( continuing ){
+        if( !is.list(cv.fit) )
+            stop("cv.fit must be an object returned by cv.prems().")
+        if( is.null(cv.fit$fold.fits) )
+            stop("cv.fit does not contain fold-specific PReMS fits and cannot be continued. ",
+                 "Refit with the current cv.prems() implementation first.")
+        if( is.null(cv.fit$pwll) || is.null(cv.fit$foldid) )
+            stop("cv.fit must contain $pwll and $foldid.")
+
+        # A continued analysis normally remains continuable.  Users can
+        # explicitly set return.fits=FALSE on the final call to discard the
+        # fold-specific PReMS searches and reduce memory use.
+        if( return.fits.missing )
+            return.fits <- TRUE
+
+        old.pwll <- as.matrix(cv.fit$pwll)
+        if( is.null(colnames(old.pwll)) ){
+            old.sizes <- seq_len(ncol(old.pwll))
+        }else{
+            old.sizes <- suppressWarnings(as.integer(colnames(old.pwll)))
+            if( anyNA(old.sizes) )
+                stop("Column names of cv.fit$pwll must be model sizes.")
+        }
+        if( length(old.sizes)==0L || any(diff(old.sizes)!=1L) )
+            stop("cv.fit$pwll must contain a contiguous sequence of model sizes.")
+
+        current.k <- max(old.sizes)
+        old.k.min <- min(old.sizes)
+        if( k.min.missing ){
+            k.min <- old.k.min
+        }else if( k.min != old.k.min ){
+            stop("k.min differs from the existing cv.fit object.")
+        }
+        if( k.max < current.k )
+            stop("k.max must be at least the largest model size already present in cv.fit (", current.k, ").")
+
+        if( !is.null(cv.fit$family) ){
+            if( family.missing ){
+                family <- cv.fit$family
+            }else if( !identical(family, cv.fit$family) ){
+                stop("family differs from the existing cv.fit object.")
+            }
+        }else{
+            family <- cv.fit$fold.fits[[1]]$family
+        }
+        if( !is.null(cv.fit$criteria) ){
+            if( criteria.missing ){
+                criteria <- cv.fit$criteria
+            }else if( !identical(criteria, cv.fit$criteria) ){
+                stop("criteria differs from the existing cv.fit object.")
+            }
+        }
+        if( !is.null(cv.fit$standardize) && !standardize.missing &&
+            !identical(standardize, cv.fit$standardize) )
+            stop("standardize differs from the existing cv.fit object.")
+
+        if( foldid.supplied &&
+            !identical(as.integer(foldid), as.integer(cv.fit$foldid)) )
+            stop("foldid differs from the existing cv.fit object.")
+        foldid <- cv.fit$foldid
+        nfolds.saved <- length(unique(foldid))
+        if( nfolds.supplied && nfolds != nfolds.saved )
+            stop("nfolds differs from the existing cv.fit object.")
+        nfolds <- nfolds.saved
+
+        if( length(foldid) != n )
+            stop("The supplied data have a different number of observations from cv.fit.")
+        if( nrow(x) != n )
+            stop("NROW(y) must equal nrow(x).")
+        if( !is.null(x.fixed) && nrow(x.fixed) != n )
+            stop("NROW(y) must equal nrow(x.fixed).")
+        saved.x.names <- cv.fit$x.names
+        if( is.null(saved.x.names) )
+            saved.x.names <- cv.fit$fold.fits[[1]]$cnames
+        if( !identical(colnames(x), saved.x.names) )
+            stop("colnames(x) differ from those used to create cv.fit.")
+
+        has.fixed <- !is.null(x.fixed)
+        if( !is.null(cv.fit$has.fixed) && has.fixed != cv.fit$has.fixed )
+            stop("x.fixed does not match the original cv.fit analysis.")
+        fixed.names <- if( has.fixed ) colnames(x.fixed) else NULL
+        saved.fixed.names <- cv.fit$x.fixed.names
+        if( is.null(saved.fixed.names) )
+            saved.fixed.names <- cv.fit$fold.fits[[1]]$cnames.fixed
+        if( has.fixed && !identical(fixed.names, saved.fixed.names) )
+            stop("colnames(x.fixed) differ from those used to create cv.fit.")
+        if( length(cv.fit$fold.fits) != nfolds )
+            stop("cv.fit$fold.fits does not contain one fit per CV fold.")
+
+        if( k.max == current.k ){
+            if( verbose )
+                print(paste("cv.fit already contains model sizes through", current.k))
+            if( !return.fits )
+                cv.fit$fold.fits <- NULL
+            return(cv.fit)
+        }
+
+        new.sizes <- seq.int(current.k + 1L, k.max)
+        pwll <- cbind(
+            old.pwll,
+            matrix(NA_real_, nrow=nfolds, ncol=length(new.sizes),
+                   dimnames=list(rownames(old.pwll), as.character(new.sizes)))
+        )
+        selected.coef <- cv.fit$selected.coef
+        length(selected.coef) <- k.max
+        for( k in new.sizes )
+            selected.coef[[k]] <- matrix(nrow=nfolds, ncol=k)
+        fold.fits <- cv.fit$fold.fits
+        score.sizes <- new.sizes
+
+        if( verbose )
+            print(paste("Continuing", nfolds, "fold cross-validation from model size",
+                        current.k, "to", k.max))
+    }else{
+        if( is.null(foldid) & is.null(nfolds) ){
+            nfolds <- n
+            foldid <- seq_len(nfolds)
+        }
+        if( !is.null(foldid) & is.null(nfolds) )
+            nfolds <- length(unique(foldid))
+        if( is.null(foldid) ){
+            yy <- y
+            if( family=="cox" )
+                yy <- y[,ncol(y)]
+            if( family=="cox" | family=="binomial" ){
+                foldid <- make.folds2(yy, folds=nfolds)
+                if( verbose ) print(table(yy, foldid))
+            }
+            if( family=="gaussian" ){
+                foldid <- make.folds.continuous(n, nfolds)
+                if( verbose ) print(table(foldid))
+            }
+        }
+        if( length(foldid) != n )
+            stop("foldid must contain one value per observation.")
+        if( anyNA(foldid) )
+            stop("foldid contains missing values.")
+        if( !identical(sort(unique(as.integer(foldid))), seq_len(nfolds)) )
+            stop("foldid values must be the integers 1,...,nfolds.")
+
+        pwll <- matrix(nrow=nfolds, ncol=(k.max-k.min+1),
+                       dimnames=list(paste0("fold", seq_len(nfolds)),
+                                     as.character(k.min:k.max)))
+        if( verbose )
+            print(paste(nfolds,'fold cross-validation'))
+        selected.coef <- vector("list", k.max)
+        for( k in k.min:k.max )
+            selected.coef[[k]] <- matrix(nrow=nfolds, ncol=k)
+        fold.fits <- if( return.fits ) vector("list", nfolds) else NULL
+        score.sizes <- k.min:k.max
     }
 
     for( i in seq_len(nfolds) ){
@@ -579,51 +750,77 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         x.fixed.train <- if( is.null(x.fixed) ) NULL else x.fixed[train,,drop=FALSE]
         x.fixed.test <- if( is.null(x.fixed) ) NULL else x.fixed[test,,drop=FALSE]
 
-        if( is.null(tau.i) ){
-            tauest <- NULL
-            attempt <- 1
-            max.attempts <- 20
-            tau.nfolds <- min(10, NROW(y.train))
+        if( continuing ){
+            my.fit <- fold.fits[[i]]
+            if( !identical(my.fit$family, family) )
+                stop("Saved fold fit ", i, " has a different family.")
+            if( length(my.fit$fitted.models) < current.k )
+                stop("Saved fold fit ", i, " does not reach model size ", current.k, ".")
 
-            while( attempt <= max.attempts ){
-                tauest.try <- try(
-                    TauEst(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
-                           family=family, nfolds=tau.nfolds, parallel=FALSE),
-                    silent=TRUE
-                )
-                ok <- !inherits(tauest.try, "try-error") &&
-                    !is.null(tauest.try$tau.opt) &&
-                    length(tauest.try$tau.opt) == 1 &&
-                    is.numeric(tauest.try$tau.opt) &&
-                    is.finite(tauest.try$tau.opt) &&
-                    tauest.try$tau.opt > 0
-                if( ok ){
-                    tauest <- tauest.try
-                    break
-                }
-                attempt <- attempt + 1
-            }
-            if( is.null(tauest) ){
-                stop("Unable to estimate tau in cross-validation fold ", i,
-                     ". Supply tau.i explicitly or inspect the glmnet fit.")
-            }
-            tau <- tauest$tau.opt * lasso.factor
-            if( verbose ) print(paste0("tau=",tau))
+            if( verbose )
+                print(paste("Fold", i, ": extending from model size",
+                            current.k, "to", k.max))
+            my.fit <- ModelSearchIncrease(
+                fitted.models=my.fit,
+                y=y.train,
+                x=x[train,,drop=FALSE],
+                x.fixed=x.fixed.train,
+                k.max=k.max,
+                no.cores=no.cores,
+                max.s=if( max.s.missing ) NULL else max.s,
+                verbose=verbose
+            )
         }else{
-            tau <- tau.i
+            if( is.null(tau.i) ){
+                tauest <- NULL
+                attempt <- 1
+                max.attempts <- 20
+                tau.nfolds <- min(10, NROW(y.train))
+
+                while( attempt <= max.attempts ){
+                    tauest.try <- try(
+                        TauEst(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
+                               family=family, nfolds=tau.nfolds, parallel=FALSE),
+                        silent=TRUE
+                    )
+                    ok <- !inherits(tauest.try, "try-error") &&
+                        !is.null(tauest.try$tau.opt) &&
+                        length(tauest.try$tau.opt) == 1 &&
+                        is.numeric(tauest.try$tau.opt) &&
+                        is.finite(tauest.try$tau.opt) &&
+                        tauest.try$tau.opt > 0
+                    if( ok ){
+                        tauest <- tauest.try
+                        break
+                    }
+                    attempt <- attempt + 1
+                }
+                if( is.null(tauest) ){
+                    stop("Unable to estimate tau in cross-validation fold ", i,
+                         ". Supply tau.i explicitly or inspect the glmnet fit.")
+                }
+                tau <- tauest$tau.opt * lasso.factor
+                if( verbose ) print(paste0("tau=",tau))
+            }else{
+                tau <- tau.i
+            }
+
+            my.fit <- prems(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
+                            family=family, tau=tau, k.max=k.max, max.s=max.s,
+                            standardize=standardize, max2way=max2way,
+                            no.cores=no.cores, verbose=FALSE)
         }
 
-        my.fit <- prems(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
-                        family=family, tau=tau, k.max=k.max, max.s=max.s,
-                        standardize=standardize, max2way=max2way,
-                        no.cores=no.cores, verbose=FALSE)
+        if( continuing || return.fits )
+            fold.fits[[i]] <- my.fit
 
-        for( k in k.min:k.max ){
-            kk <- k - k.min + 1
+        for( k in score.sizes ){
+            kk <- match(k, as.integer(colnames(pwll)))
             pred <- predict.prems(my.fit,
                                   newx=x[test,,drop=FALSE],
                                   newx.fixed=x.fixed.test,
-                                  size=k, criteria=criteria)
+                                  size=k, criteria=criteria,
+                                  no.cores=no.cores)
 
             if( family=='binomial' ){
                 lp1 <- log(pred)
@@ -637,25 +834,23 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                 pwll[i,kk] <- cox_pl_left_trunc(y.test, pred)
             }
 
-            coef.names <- names(getModelFit(my.fit, size=k, rank=1, criteria=criteria)$beta)
+            coef.names <- names(getModelFit(my.fit, size=k, rank=1,
+                                            no.cores=no.cores, criteria=criteria)$beta)
             selected <- setdiff(coef.names, c("I", my.fit$cnames.fixed))
             selected.coef[[k]][i,] <- selected
         }
 
-        if( verbose ){
+        if( verbose )
             print(paste('Fold',i,'complete.'))
-        }
     }
 
-    colnames(pwll) <- as.character(k.min:k.max)
-    rownames(pwll) <- paste0("fold", seq_len(nfolds))
-
+    model.sizes <- as.integer(colnames(pwll))
     cvm <- apply(pwll, 2, mean)
     cvsd <- apply(pwll, 2, sd)/sqrt(nfolds)
-    names(cvm) <- k.min:k.max
-    names(cvsd) <- k.min:k.max
+    names(cvm) <- model.sizes
+    names(cvsd) <- model.sizes
 
-    sizes <- (k.min:k.max)[prems.optim(cvm, cvsd)]
+    sizes <- model.sizes[prems.optim(cvm, cvsd)]
 
     ret <- list(
         best=sizes[1],
@@ -664,8 +859,17 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         cvsd=cvsd,
         selected.coef=selected.coef,
         pwll=pwll,
-        foldid=foldid
+        foldid=foldid,
+        family=family,
+        criteria=criteria,
+        standardize=if( continuing ) cv.fit$standardize else standardize,
+        x.names=colnames(x),
+        x.fixed.names=if( is.null(x.fixed) ) NULL else colnames(x.fixed),
+        has.fixed=!is.null(x.fixed)
     )
+    if( return.fits )
+        ret$fold.fits <- fold.fits
+    class(ret) <- c("cv.prems", "list")
     return(ret)
 }
 
@@ -827,6 +1031,8 @@ prems.cv.stop <- function( cv.fit, block.size=10, se.multiplier=1,
 
 # Backwards-compatible name used by earlier development scripts.
 apply_cv_prems_parallel_stopping_rule <- prems.cv.stop
+
+
 
 TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
                     n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE ){

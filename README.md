@@ -44,8 +44,8 @@ The Tecator and NKI70 data are downloaded directly in the examples below, so no 
 | Function | Purpose |
 | --- | --- |
 | `prems()` | Search and fit candidate models up to a specified model size. |
-| `ModelSearchIncrease()` | Extend an existing PReMS search by one additional model size without repeating the smaller-model searches. |
-| `cv.prems()` | Cross-validation over model size. |
+| `ModelSearchIncrease()` | Extend an existing PReMS search to a specified maximum model size without repeating the smaller-model searches. |
+| `cv.prems()` | Cross-validation over model size, with optional continuation of an existing CV search. |
 | `TauEst()` | Estimate the ridge-prior precision used by PReMS from a Lasso fit. |
 | `getModelFit()` | Extract a ranked fitted model of a specified size. |
 | `predict.prems()` | Generate predictions from a fitted PReMS model. |
@@ -65,6 +65,8 @@ The most important arguments are:
 | `max2way` | `"all"` evaluates all two-predictor models; an integer limits the two-predictor search by expanding only that many top one-predictor models. |
 | `standardize` | Standardise predictors internally before model fitting. |
 | `no.cores` | Number of cores used by the model search. |
+| `cv.fit` | Existing `cv.prems()` object to continue to a larger `k.max`. The object must contain retained fold fits. |
+| `return.fits` | If `TRUE`, retain the fold-specific PReMS fits needed to continue a CV search. Default `FALSE`. |
 
 Within the returned fit object, the quantity named `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models. Cross-validation uses predictive performance to select model size and returns both the size with the best mean performance (`best`) and a smaller one-standard-error alternative where available (`one.se`).
 
@@ -211,27 +213,28 @@ The returned coefficient vector contains the intercept (`I`) followed by the sel
 
 ### 6. Extend an existing search to a larger model size
 
-`ModelSearchIncrease()` can be used when a fitted search should be extended by one additional model size without repeating the searches already completed. For example, the fit above searched models of sizes 1--15. The following extends it to size 16:
+`ModelSearchIncrease()` can be used when a fitted search should be extended to larger model sizes without repeating the searches already completed. For example, the fit above searched models of sizes 1--15. The following extends it through size 20:
 
 ```r
 fit <- ModelSearchIncrease(
   fitted.models = fit,
   y = y.train,
   x = x.train,
+  k.max = 20,
   no.cores = 4
 )
 
-size16.model <- getModelFit(
+size20.model <- getModelFit(
   fit,
-  size = 16,
+  size = 20,
   rank = 1,
   criteria = "ML"
 )
 
-size16.model$beta
+size20.model$beta
 ```
 
-Each call to `ModelSearchIncrease()` adds one model size. By default it retains the same search breadth as the current largest size; supply `max.s` to override this.
+`k.max` is the largest model size to be fitted. If it is omitted, `ModelSearchIncrease()` adds one model size, preserving backwards compatibility. By default the search breadth is inherited from the current largest model size; supply `max.s` to override this.
 
 ### 7. Compare PReMS and Lasso in the independent test set
 
@@ -304,47 +307,63 @@ When computation is modest, a broad range of model sizes can be searched in one 
 
 ### SPECTF example in blocks of five
 
-Using the same folds as above, rerun the SPECTF CV analysis in blocks of five:
+The initial search evaluates model sizes 1--5:
 
 ```r
-run.spectf.cv <- function(k.max) {
-  cv.prems(
-    y = y.train,
-    x = x.train,
-    family = "binomial",
-    k.min = 1,
-    k.max = k.max,
-    foldid = foldid,
-    max2way = "all",
-    max.s = 50,
-    no.cores = 4,
-    criteria = "ML"
-  )
-}
+cv.fit <- cv.prems(
+  y = y.train,
+  x = x.train,
+  family = "binomial",
+  k.min = 1,
+  k.max = 5,
+  foldid = foldid,
+  max2way = "all",
+  max.s = 50,
+  no.cores = 4,
+  criteria = "ML",
+  return.fits = TRUE
+)
 
-cv.fit <- run.spectf.cv(5)
 stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
 stop.fit$adequate
 stop.fit$selected.size
 ```
 
-With only sizes 1--5 evaluated, `adequate` is `FALSE` because another complete block is required. Continue with sizes 1--10:
+`return.fits = TRUE` retains the fold-specific PReMS searches needed for continuation. If another block is required, pass the returned object back to `cv.prems()`. The following extends each fold from size 5 to size 10; sizes 1--5 are not refitted:
+
+**RAM usage:** retaining fold fits can make a `cv.prems` object large because it stores the complete PReMS search for every CV fold. The default is therefore `return.fits = FALSE`. Set it to `TRUE` only when continuation is required, particularly for analyses with large `max.s` or searches extending to many model sizes.
 
 ```r
-cv.fit <- run.spectf.cv(10)
+cv.fit <- cv.prems(
+  y = y.train,
+  x = x.train,
+  k.max = 10,
+  cv.fit = cv.fit,
+  no.cores = 4
+)
+
 stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
 stop.fit$comparisons
 stop.fit$adequate
 ```
 
-If the second block improves by more than one paired SE, continue through size 15:
+If the second block improves predictive performance sufficiently, extend the same object through size 15. Only sizes 11--15 are searched:
 
 ```r
-cv.fit <- run.spectf.cv(15)
+cv.fit <- cv.prems(
+  y = y.train,
+  x = x.train,
+  k.max = 15,
+  cv.fit = cv.fit,
+  no.cores = 4
+)
+
 stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
 stop.fit$selected.size
 stop.fit$adequate
 ```
+
+When `cv.fit` is supplied, the original folds, outcome family, model-ranking criterion and fold-specific shrinkage estimates are retained. If `return.fits` is omitted on a continuation call, the fold fits are retained so that the search can be extended again. Set `return.fits = FALSE` explicitly on the final continuation call if the fold fits are no longer required. The same `y`, `x` and, where applicable, `x.fixed` used in the original CV analysis should be supplied.
 
 The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally expensive.
 
@@ -684,7 +703,9 @@ PReMS standardises selected and fixed predictors internally by default. Zero-var
 
 The search can become computationally expensive when the number of predictors is large. `max2way` controls the breadth of the initial two-predictor search and `max.s` controls the number of candidate models propagated to larger model sizes. These parameters therefore trade off search breadth against computation.
 
-If a completed search later needs to be extended, `ModelSearchIncrease()` adds one model size at a time without recomputing the smaller models. The same training `y`, `x` and, where applicable, `x.fixed` used for the original fit should be supplied.
+By default, `cv.prems()` does not retain the fold-specific PReMS fits. Setting `return.fits = TRUE` is required for model-size continuation but can substantially increase RAM use because a complete search object is stored for every CV fold.
+
+If a completed search later needs to be extended, `ModelSearchIncrease()` can extend it directly to a specified `k.max` without recomputing the smaller models. The same training `y`, `x` and, where applicable, `x.fixed` used for the original fit should be supplied.
 
 ## Citation
 
