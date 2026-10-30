@@ -373,7 +373,7 @@ This sequential result need not agree with the model size selected in the first 
 
 When `cv.fit` is supplied, the original folds, outcome family, model-ranking criterion and fold-specific shrinkage estimates are retained. If `return.fits` is omitted on a continuation call, the fold fits are retained so that the search can be extended again. Set `return.fits = FALSE` explicitly on the final continuation call if the fold fits are no longer required. The same `y`, `x` and, where applicable, `x.fixed` used in the original CV analysis should be supplied.
 
-The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally expensive.
+The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally infeasible.
 
 ## Parallel cross-validation on HPC
 
@@ -418,7 +418,7 @@ Only the absorbance measurements are used as predictors. Water and protein perce
 
 ### 2. Select PReMS model size by cross-validation
 
-Use the same fold assignments for PReMS and Lasso. With 100 candidate predictors, an exhaustive search of all two-predictor models is possible but makes a README example unnecessarily slow. Here `max2way = 20` expands the 20 highest-ranking one-predictor models when constructing the initial two-predictor search.
+Use the same fold assignments for PReMS and Lasso. With 100 candidate predictors, an exhaustive search of all two-predictor models is possible but makes a README example unnecessarily slow. Here `max2way = 50` expands the 20 highest-ranking one-predictor models when constructing the initial two-predictor search.
 
 ```r
 set.seed(1)
@@ -431,7 +431,7 @@ cv.fit <- cv.prems(
   k.min = 1,
   k.max = 10,
   foldid = foldid,
-  max2way = 20,
+  max2way = 'all',
   max.s = 50,
   no.cores = 4,
   criteria = "ML"
@@ -483,7 +483,7 @@ fit <- prems(
   family = "gaussian",
   tau = tau.fit$tau.opt,
   k.max = 10,
-  max2way = 20,
+  max2way = 'all',
   max.s = 50,
   no.cores = 4,
   standardize = TRUE
