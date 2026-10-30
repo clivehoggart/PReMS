@@ -301,9 +301,22 @@ The predefined SPECTF test set is highly imbalanced, so AUC is more informative 
 
 ## Model-size selection and sequential stopping
 
-When computation is modest, a broad range of model sizes can be searched in one `cv.prems()` call, as in the SPECTF example above. For more expensive analyses, model sizes can be explored sequentially in blocks.
+When computation is modest, a broad range of model sizes can be searched in one `cv.prems()` call, as in the SPECTF example above. For more expensive analyses, model sizes can instead be explored sequentially in blocks.
 
-`prems.cv.stop()` compares the best model in each new block with the current best model using paired differences in held-out CV score across folds. The search continues only if the new block improves mean predictive performance by more than one paired standard error. The default block size is 10.
+`prems.cv.stop()` applies a different model-size rule from simply taking the model size with the highest mean CV score over a fixed range. It starts with the best model in the first block, then compares this retained model with the best model in each subsequent block using paired differences in held-out CV score across folds. The search is extended only when the new block improves predictive performance by more than `se.multiplier` paired standard errors; the default is one paired standard error.
+
+The object returned by `prems.cv.stop()` contains:
+
+| Component | Meaning |
+| --- | --- |
+| `selected.size` | Model size retained by the sequential stopping rule. This is not necessarily the largest model size evaluated. |
+| `selected.mean` | Mean held-out CV score for `selected.size`. |
+| `adequate` | `TRUE` when the evaluated range is sufficient for the stopping rule to stop; `FALSE` when another complete block should be explored. |
+| `reason` | Text explaining why the search stopped or why another block is required. |
+| `comparisons` | Data frame containing the block-by-block paired comparisons. |
+| `mean.score` | Mean held-out CV score for every model size evaluated. |
+
+Within `comparisons`, `previous_size` is the currently retained model size and `candidate_size` is the best model in the new block. `mean_difference` is the mean fold-wise difference in predictive score between them, `se_difference` is its standard error and `threshold` is `se.multiplier * se_difference`. `improves` is `TRUE` only when `mean_difference > threshold`. `block_complete` indicates whether the full requested block has been evaluated.
 
 ### SPECTF example in blocks of five
 
@@ -325,13 +338,17 @@ cv.fit <- cv.prems(
 )
 
 stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
-stop.fit$adequate
+
 stop.fit$selected.size
+stop.fit$adequate
+stop.fit$reason
 ```
+
+With only the first block evaluated, `adequate` is `FALSE`: the stopping rule requires another block before deciding whether the explored range is sufficient.
 
 `return.fits = TRUE` retains the fold-specific PReMS searches needed for continuation. If another block is required, pass the returned object back to `cv.prems()`. The following extends each fold from size 5 to size 10; sizes 1--5 are not refitted:
 
-**RAM usage:** retaining fold fits can make a `cv.prems` object large because it stores the complete PReMS search for every CV fold. The default is therefore `return.fits = FALSE`. Set it to `TRUE` only when continuation is required.
+**RAM usage:** retaining fold fits can make a `cv.prems` object large because it stores the complete PReMS search for every CV fold. The default is therefore `return.fits = FALSE`. Set it to `TRUE` only when continuation is required, particularly for analyses with large `max.s` or searches extending to many model sizes.
 
 ```r
 cv.fit <- cv.prems(
@@ -343,25 +360,16 @@ cv.fit <- cv.prems(
 )
 
 stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
-stop.fit$comparisons
-stop.fit$adequate
-```
 
-If the second block improves predictive performance sufficiently, extend the same object through size 15. Only sizes 11--15 are searched:
-
-```r
-cv.fit <- cv.prems(
-  y = y.train,
-  x = x.train,
-  k.max = 15,
-  cv.fit = cv.fit,
-  no.cores = 4
-)
-
-stop.fit <- prems.cv.stop(cv.fit, block.size = 5)
 stop.fit$selected.size
 stop.fit$adequate
+stop.fit$reason
+stop.fit$comparisons
 ```
+
+For the SPECTF data, the search is adequate after model sizes 1--10 have been evaluated, so `stop.fit$adequate` is `TRUE` and there is no need to extend the search through size 15. This means that the **search stops after evaluating model size 10**; it does not imply that `selected.size` must equal 10.
+
+This sequential result need not agree with the model size selected in the first SPECTF example. There, `cv.fit$best` is simply the model size with the highest mean CV predictive score among all sizes 1--15. In contrast, `prems.cv.stop()` uses a blockwise stopping criterion based on paired fold-level improvements and may stop before the full range is evaluated. The two procedures therefore answer slightly different questions and can select different model sizes, particularly when the CV curve is fairly flat around its maximum.
 
 When `cv.fit` is supplied, the original folds, outcome family, model-ranking criterion and fold-specific shrinkage estimates are retained. If `return.fits` is omitted on a continuation call, the fold fits are retained so that the search can be extended again. Set `return.fits = FALSE` explicitly on the final continuation call if the fold fits are no longer required. The same `y`, `x` and, where applicable, `x.fixed` used in the original CV analysis should be supplied.
 
