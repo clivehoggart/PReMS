@@ -18,7 +18,7 @@ For binary outcomes, `y` is coded `0/1`. For Cox models, `y` should be a `surviv
 
 PReMS is currently used by sourcing the R script rather than installing an R package.
 
-The only external package required for a single-core Gaussian or binomial workflow is `glmnet`. Cox models additionally require `survival`. When `tau` is estimated automatically and `no.cores > 1`, `doParallel` is used to provide the `foreach` backend required by parallel `cv.glmnet()`; `foreach` is installed as a dependency of `doParallel`.
+The core Gaussian and binomial workflow requires `glmnet`. Cox models additionally require `survival`. For multicore automatic estimation of `tau`, install `doParallel`.
 
 ```r
 install.packages("glmnet")
@@ -26,13 +26,13 @@ install.packages("glmnet")
 # Required for multicore automatic estimation of tau:
 install.packages("doParallel")
 
-# Required only for Cox models if survival is not already installed:
+# Required only for Cox models:
 install.packages("survival")
 
 source("prems.R")
 ```
 
-`parallel` is a recommended R package distributed with R and does not normally need to be installed separately. When `tau = NULL`, PReMS uses parallel `cv.glmnet()` automatically if `no.cores > 1`; after tau estimation finishes, the temporary backend is closed before PReMS begins its model search. PReMS subsequently calls `parallel::mclapply()` for the model search. On Windows use `no.cores = 1`; multiple cores can be used with `mclapply()` on macOS and Linux. The examples below use the R interface throughout. Parallel cross-validation across HPC jobs is documented separately in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
+On Windows use `no.cores = 1` for the PReMS model search. Multiple cores can be used on macOS and Linux. Parallel cross-validation across HPC jobs is documented separately in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -40,13 +40,13 @@ The SPECTF example uses `pROC` to calculate AUC:
 install.packages("pROC")
 ```
 
-The Tecator and NKI70 data are downloaded directly in the examples below, so no additional R packages are needed to obtain these data. `pROC` is otherwise required only if the convenience functions `cv.auc()` or `my.auc()` are used. `gplots`, `igraph`, `MASS` and `exvatools` are not required by the current script.
+The Tecator and NKI70 data are downloaded directly in the examples below, so no additional packages are needed to obtain these data.
 
 ## Function reference
 
 ### Main functions
 
-The two principal user-facing functions are `prems()` and `cv.prems()`. PReMS model searches are ranked by the negative approximate log marginal likelihood (`ML`); this is fixed by the current implementation and is therefore not exposed as a user option.
+The two principal user-facing functions are `prems()` and `cv.prems()`. PReMS ranks candidate models by the negative approximate log marginal likelihood (`ML`), so smaller values indicate higher-ranked models.
 
 #### `prems()`
 
@@ -76,7 +76,7 @@ prems(
 
 Both `family` and `k.max` must be supplied explicitly. `max.s = 50` is shared with `cv.prems()` so that, unless overridden, model-size selection and the final full-data fit use the same search breadth.
 
-The returned PReMS fit contains the retained models at each model size, their model indicators, scaling information, the fitted `tau` and other information needed by the helper and continuation functions. Within each fitted model, `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models. AIC is also stored as a diagnostic quantity but is not used to rank models in the current PReMS workflow.
+The returned PReMS fit contains the retained models at each model size together with the information needed for prediction and continuation. Within each fitted model, `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models.
 
 #### `cv.prems()`
 
@@ -208,7 +208,7 @@ ModelSearchIncrease(
 | `no.cores` | `1` | Number of cores used for the added model searches. |
 | `max.s` | `NULL` | Number of models retained at each newly fitted size. When `NULL`, the search breadth retained at the current largest size is preserved. |
 | `verbose` | `TRUE` | Print progress as each new model size is completed. |
-| `checkpoint` | `NULL` | Optional callback invoked after each newly completed model size, primarily for batch/HPC checkpointing. |
+| `checkpoint` | `NULL` | Optional function called after each newly completed model size. See `PARALLEL_CV.md` for checkpointed HPC use. |
 
 The existing `tau`, scaling parameters and fitted smaller model sizes are inherited from `fitted.models`.
 
@@ -232,10 +232,10 @@ TauEst(
 | `n.coef` | `1` | Number of the largest absolute Lasso coefficients used in the calculation of `tau`. |
 | `fit` | `NULL` | Optional existing `cv.glmnet` fit. When supplied, the Lasso CV step is not repeated. |
 | `nfolds` | `10` | Number of folds used by `cv.glmnet()`. |
-| `parallel` | `FALSE` | Allow `cv.glmnet()` to use a registered `foreach` backend. `prems()` sets this automatically according to `no.cores` when it calls `TauEst()`. |
-| `no.cores` | `1` | Number of workers used when `TauEst()` creates its own temporary parallel backend. |
+| `parallel` | `FALSE` | Use parallel cross-validation when estimating `tau`. |
+| `no.cores` | `1` | Number of cores used when `parallel = TRUE`. |
 
-`TauEst()` returns `tau.opt`, `tau.1se` and the underlying Lasso CV fit in `fit.lasso`. Most users do not need to call it directly because `prems()` invokes it automatically when `tau = NULL`.
+`TauEst()` returns `tau.opt` and `tau.1se`. Most users do not need to call it directly because `prems()` invokes it automatically when `tau = NULL`.
 
 ## Example: UCI SPECTF Heart data
 
@@ -388,7 +388,7 @@ size20.model <- getModelFit(
 size20.model$beta
 ```
 
-`k.max` is the largest model size to be fitted. If it is omitted, `ModelSearchIncrease()` adds one model size, preserving backwards compatibility. By default the search breadth is inherited from the current largest model size; supply `max.s` to override this.
+`k.max` is the largest model size to be fitted. If it is omitted, `ModelSearchIncrease()` adds one model size. By default the search breadth is inherited from the current largest model size; supply `max.s` to override this.
 
 ### 7. Compare PReMS and Lasso in the independent test set
 
@@ -840,7 +840,7 @@ Use the same fixed-covariate columns, in the same order, when calling `predict.p
 
 PReMS standardises selected and fixed predictors internally by default. Zero-variance candidate predictors are excluded from the search with a warning. Missing values should be handled before calling PReMS. Because prediction identifies selected predictors by column name, training and prediction matrices should have consistent, unique column names.
 
-If `tau = NULL` (the default), `prems()` estimates the ridge-prior precision internally using `TauEst()` before standardising the data for the PReMS search. The estimated value is stored as `fit$tau`. Supply a positive numeric `tau` to bypass this step. `tau.nfolds` and `tau.attempts` control the internal Lasso cross-validation and retry behaviour. When `no.cores > 1`, this Lasso cross-validation is run in parallel using `cv.glmnet(..., parallel = TRUE)`. If no `foreach` backend is already registered, PReMS creates a temporary `doParallel` backend with `no.cores` workers and closes it when tau estimation is complete. Tau estimation and the subsequent PReMS model search are therefore separate parallel phases rather than nested parallel computations.
+If `tau = NULL` (the default), `prems()` estimates the ridge-prior precision automatically using `TauEst()`. The estimated value is stored as `fit$tau`. Supply a positive numeric `tau` to override automatic estimation. `tau.nfolds` and `tau.attempts` control this estimation step.
 
 The search can become computationally expensive when the number of predictors is large. `max2way` controls the breadth of the initial two-predictor search and `max.s` controls the number of candidate models propagated to larger model sizes. These parameters therefore trade off search breadth against computation.
 
