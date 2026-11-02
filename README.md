@@ -46,7 +46,7 @@ The Tecator and NKI70 data are downloaded directly in the examples below, so no 
 | `prems()` | Search and fit candidate models up to a specified model size. |
 | `ModelSearchIncrease()` | Extend an existing PReMS search to a specified maximum model size without repeating the smaller-model searches. |
 | `cv.prems()` | Cross-validation over model size, with optional continuation of an existing CV search. |
-| `TauEst()` | Estimate the ridge-prior precision used by PReMS from a Lasso fit. |
+| `TauEst()` | Estimate the ridge-prior precision directly; `prems()` calls this automatically when `tau = NULL`. |
 | `getModelFit()` | Extract a ranked fitted model of a specified size. |
 | `predict.prems()` | Generate predictions from a fitted PReMS model. |
 | `plot.cv.prems()` | Plot the cross-validation criterion against model size. |
@@ -59,7 +59,7 @@ The most important arguments are:
 | `x` | Matrix of predictors considered for selection. |
 | `x.fixed` | Optional covariates included in every model and not subject to selection. The default is `NULL`. |
 | `family` | Outcome family: `"binomial"`, `"gaussian"` or `"cox"`. |
-| `tau` | Ridge-prior precision. Usually estimated with `TauEst()`. |
+| `tau` | Ridge-prior precision. The default `NULL` estimates it automatically using `TauEst()`; supply a numeric value to override this. |
 | `k.max` | Largest candidate model size. |
 | `max.s` | Number of highest-ranking models retained at each model size for subsequent expansion. |
 | `max2way` | `"all"` evaluates all two-predictor models; an integer limits the two-predictor search by expanding only that many top one-predictor models. |
@@ -90,8 +90,8 @@ feature.names <- as.vector(rbind(
   paste0("F", 1:22, "S")
 ))
 
-train <- read.csv("data/SPECTF.train", header = FALSE)
-test  <- read.csv("data/SPECTF.test",  header = FALSE)
+train <- read.csv("SPECTF.train", header = FALSE)
+test  <- read.csv("SPECTF.test",  header = FALSE)
 
 colnames(train) <- c("diagnosis", feature.names)
 colnames(test)  <- c("diagnosis", feature.names)
@@ -165,25 +165,15 @@ c(
 
 ### 4. Fit PReMS to the complete training set
 
-Estimate `tau` on the full training data, then repeat the PReMS search using the same maximum model size considered during cross-validation.
+Repeat the PReMS search using the complete training data and the same maximum model size considered during cross-validation. Because `tau` is omitted, `prems()` estimates it automatically using `TauEst()`.
 
 ```r
 set.seed(1)
-
-tau.fit <- TauEst(
-  y = y.train,
-  x = x.train,
-  family = "binomial",
-  nfolds = 10
-)
-
-tau <- tau.fit$tau.opt
 
 fit <- prems(
   y = y.train,
   x = x.train,
   family = "binomial",
-  tau = tau,
   k.max = 15,
   max2way = "all",
   max.s = 50,
@@ -373,7 +363,7 @@ This sequential result need not agree with the model size selected in the first 
 
 When `cv.fit` is supplied, the original folds, outcome family, model-ranking criterion and fold-specific shrinkage estimates are retained. If `return.fits` is omitted on a continuation call, the fold fits are retained so that the search can be extended again. Set `return.fits = FALSE` explicitly on the final continuation call if the fold fits are no longer required. The same `y`, `x` and, where applicable, `x.fixed` used in the original CV analysis should be supplied.
 
-The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally infeasible.
+The SPECTF predictive log-likelihood is fairly flat around its optimum. For small or moderate datasets, repeated CV replicates can therefore give a more stable estimate of model size; this was the approach used for the benchmark datasets in the paper. Sequential stopping is most useful when repeatedly searching a wide range of model sizes would be computationally expensive.
 
 ## Parallel cross-validation on HPC
 
@@ -418,7 +408,7 @@ Only the absorbance measurements are used as predictors. Water and protein perce
 
 ### 2. Select PReMS model size by cross-validation
 
-Use the same fold assignments for PReMS and Lasso. With 100 candidate predictors, an exhaustive search of all two-predictor models is possible but makes a README example unnecessarily slow. Here `max2way = 50` expands the 20 highest-ranking one-predictor models when constructing the initial two-predictor search.
+Use the same fold assignments for PReMS and Lasso. With 100 candidate predictors, an exhaustive search of all two-predictor models is possible but makes a README example unnecessarily slow. Here `max2way = 20` expands the 20 highest-ranking one-predictor models when constructing the initial two-predictor search.
 
 ```r
 set.seed(1)
@@ -431,7 +421,7 @@ cv.fit <- cv.prems(
   k.min = 1,
   k.max = 10,
   foldid = foldid,
-  max2way = 'all',
+  max2way = 20,
   max.s = 50,
   no.cores = 4,
   criteria = "ML"
@@ -467,23 +457,17 @@ lasso.size.1se <- sum(lasso.coef.1se[-1, 1] != 0)
 
 ### 4. Refit PReMS to the complete training set
 
+With `tau = NULL` (the default), `prems()` estimates the shrinkage precision automatically from the training data.
+
 ```r
 set.seed(1)
-
-tau.fit <- TauEst(
-  y = y.train,
-  x = x.train,
-  family = "gaussian",
-  nfolds = 10
-)
 
 fit <- prems(
   y = y.train,
   x = x.train,
   family = "gaussian",
-  tau = tau.fit$tau.opt,
   k.max = 10,
-  max2way = 'all',
+  max2way = 20,
   max.s = 50,
   no.cores = 4,
   standardize = TRUE
@@ -616,23 +600,14 @@ cv.fit <- cv.prems(
 
 ### 3. Refit PReMS to the complete data
 
-After selecting model size, estimate `tau` on the complete data and repeat the search.
+After selecting model size, repeat the search using the complete data. `prems()` estimates `tau` automatically because no explicit value is supplied.
 
 ```r
-tau.fit <- TauEst(
-  y = y,
-  x = x,
-  x.fixed = x.fixed,
-  family = "cox",
-  nfolds = 10
-)
-
 fit <- prems(
   y = y,
   x = x,
   x.fixed = x.fixed,
   family = "cox",
-  tau = tau.fit$tau.opt,
   k.max = 5,
   max2way = "all",
   max.s = 50,
@@ -696,7 +671,6 @@ fit <- prems(
   x = biomarkers,
   x.fixed = cbind(age = age, sex = sex),
   family = "binomial",
-  tau = tau,
   k.max = 5,
   max.s = 50,
   no.cores = 4
@@ -708,6 +682,8 @@ Use the same fixed-covariate columns, in the same order, when calling `predict.p
 ## Practical notes
 
 PReMS standardises selected and fixed predictors internally by default. Zero-variance candidate predictors are excluded from the search with a warning. Missing values should be handled before calling PReMS. Because prediction identifies selected predictors by column name, training and prediction matrices should have consistent, unique column names.
+
+If `tau = NULL` (the default), `prems()` estimates the ridge-prior precision internally using `TauEst()` before standardising the data for the PReMS search. The estimated value is stored as `fit$tau`. Supply a positive numeric `tau` to bypass this step. `tau.nfolds` and `tau.attempts` control the internal Lasso cross-validation and retry behaviour.
 
 The search can become computationally expensive when the number of predictors is large. `max2way` controls the breadth of the initial two-predictor search and `max.s` controls the number of candidate models propagated to larger model sizes. These parameters therefore trade off search breadth against computation.
 
