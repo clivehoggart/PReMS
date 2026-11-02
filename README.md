@@ -46,12 +46,7 @@ The Tecator and NKI70 data are downloaded directly in the examples below, so no 
 
 ### Main functions
 
-The two principal user-facing functions are:
-
-| Function | Purpose |
-| --- | --- |
-| `prems()` | Search and fit PReMS candidate models up to a specified model size. |
-| `cv.prems()` | Select model size by cross-validation, with optional continuation of an existing CV search. |
+The two principal user-facing functions are `prems()` and `cv.prems()`. PReMS model searches are ranked by the negative approximate log marginal likelihood (`ML`); this is fixed by the current implementation and is therefore not exposed as a user option.
 
 #### `prems()`
 
@@ -64,23 +59,23 @@ prems(
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `y` | Outcome. Use a numeric vector for Gaussian or binomial models and a `survival::Surv` object for Cox models. Binary outcomes should be coded `0/1`. |
-| `x` | Numeric matrix of candidate predictors subject to model selection. Columns should have unique names. |
-| `x.fixed` | Optional matrix of covariates included in every model and not subject to selection. Default `NULL`. |
-| `max2way` | Controls the initial two-predictor search. `"all"` evaluates all two-predictor models; an integer constructs the two-predictor search from that many highest-ranking one-predictor models. |
-| `k.max` | Largest model size to search. |
-| `family` | Outcome family: `"gaussian"`, `"binomial"` or `"cox"`. |
-| `tau` | Ridge-prior precision. If `NULL`, `prems()` estimates it automatically using `TauEst()`. Supply a positive numeric value to override automatic estimation. |
-| `max.s` | Number of highest-ranking models retained at each model size for expansion to the next size. |
-| `no.cores` | Number of cores used for automatic `tau` estimation and the PReMS model search. |
-| `standardize` | If `TRUE`, standardise predictors internally before fitting. |
-| `verbose` | If `TRUE`, print progress information. |
-| `tau.nfolds` | Number of folds used by `TauEst()` when `tau = NULL`. |
-| `tau.attempts` | Maximum number of attempts to obtain a valid automatic estimate of `tau`. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `y` | — | Outcome. Use a numeric vector for Gaussian or binomial models and a `survival::Surv` object for Cox models. Binary outcomes should be coded `0/1`. |
+| `x` | — | Numeric matrix of candidate predictors subject to model selection. Columns should have unique names. |
+| `x.fixed` | `NULL` | Optional matrix of covariates included in every model and not subject to selection. |
+| `max2way` | `"all"` | Controls the initial two-predictor search. `"all"` evaluates all two-predictor models; an integer constructs the two-predictor search from that many highest-ranking one-predictor models. |
+| `k.max` | `5` | Largest model size to search. |
+| `family` | `"gaussian"` | Outcome family: `"gaussian"`, `"binomial"` or `"cox"`. |
+| `tau` | `NULL` | Ridge-prior precision. When `NULL`, `prems()` estimates it automatically using `TauEst()`. Supply a positive numeric value to override automatic estimation. |
+| `max.s` | `10` | Number of highest-ranking models retained at each model size for expansion to the next size. |
+| `no.cores` | `10` | Number of cores used for automatic `tau` estimation and the PReMS model search. |
+| `standardize` | `TRUE` | Standardise predictors internally before fitting. |
+| `verbose` | `TRUE` | Print progress information. |
+| `tau.nfolds` | `10` | Number of folds used by `TauEst()` when `tau = NULL`. |
+| `tau.attempts` | `20` | Maximum number of attempts to obtain a valid automatic estimate of `tau`. |
 
-The returned PReMS fit contains the retained models at each model size, their model indicators, scaling information, the fitted `tau` and other information needed by the helper and continuation functions. Within a fitted model, `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models.
+The returned PReMS fit contains the retained models at each model size, their model indicators, scaling information, the fitted `tau` and other information needed by the helper and continuation functions. Within each fitted model, `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models. AIC is also stored as a diagnostic quantity but is not used to rank models in the current PReMS workflow.
 
 #### `cv.prems()`
 
@@ -88,86 +83,73 @@ The returned PReMS fit contains the retained models at each model size, their mo
 cv.prems(
   y, x, x.fixed = NULL, no.cores = 10, k.min = 1, k.max,
   tau.i = NULL, max.s = 50, max2way = "all", standardize = TRUE,
-  nfolds = NULL, foldid = NULL, criteria = "ML", family = "binomial",
+  nfolds = NULL, foldid = NULL, family = "binomial",
   verbose = TRUE, cv.fit = NULL, return.fits = FALSE,
   tau.nfolds = 10, tau.attempts = 20
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `y` | Outcome, in the same form as for `prems()`. |
-| `x` | Numeric matrix of candidate predictors. |
-| `x.fixed` | Optional covariates included in every model and not subject to selection. |
-| `no.cores` | Number of cores used within each fold for automatic `tau` estimation and the PReMS search. CV folds themselves are fitted sequentially by `cv.prems()`. |
-| `k.min` | Smallest model size for which CV performance is evaluated. |
-| `k.max` | Largest model size to search and evaluate. When continuing an existing CV fit, this is the new target maximum size. |
-| `tau.i` | Optional fixed value of `tau` used in every CV fold. If `NULL`, `tau` is estimated separately within each training fold. |
-| `max.s` | Number of highest-ranking models retained at each model size. When continuing an existing CV search and `max.s` is omitted, the retained search breadth is inherited from the saved fold fits. |
-| `max2way` | Controls the two-predictor search as in `prems()`. |
-| `standardize` | If `TRUE`, standardise predictors internally within each training fold. |
-| `nfolds` | Number of CV folds. If `foldid` is supplied, this is inferred when omitted. If both `nfolds` and `foldid` are omitted, leave-one-out CV is used. |
-| `foldid` | Optional vector assigning each observation to a CV fold. Supplying this is useful for reproducibility and for using identical folds across methods. |
-| `criteria` | Criterion used to rank the stored PReMS models within each model size. Default `"ML"`. |
-| `family` | Outcome family: `"gaussian"`, `"binomial"` or `"cox"`. |
-| `verbose` | If `TRUE`, print fold and model-search progress. |
-| `cv.fit` | Existing `cv.prems()` object to continue to a larger `k.max`. The object must contain retained fold fits. |
-| `return.fits` | If `TRUE`, retain the complete fold-specific PReMS fits needed for later continuation. Default `FALSE`. |
-| `tau.nfolds` | Number of folds used for automatic `tau` estimation within each training fold. |
-| `tau.attempts` | Maximum number of attempts to obtain a valid automatic estimate of `tau` within each training fold. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `y` | — | Outcome, in the same form as for `prems()`. |
+| `x` | — | Numeric matrix of candidate predictors. |
+| `x.fixed` | `NULL` | Optional covariates included in every model and not subject to selection. |
+| `no.cores` | `10` | Number of cores used within each fold for automatic `tau` estimation and the PReMS search. CV folds themselves are fitted sequentially by `cv.prems()`. |
+| `k.min` | `1` | Smallest model size for which CV performance is evaluated. |
+| `k.max` | — | Largest model size to search and evaluate. When continuing an existing CV fit, this is the new target maximum size. |
+| `tau.i` | `NULL` | Optional fixed value of `tau` used in every CV fold. When `NULL`, `tau` is estimated separately within each training fold. |
+| `max.s` | `50` | Number of highest-ranking models retained at each model size. When continuing an existing CV search and `max.s` is omitted, the retained search breadth is inherited from the saved fold fits. |
+| `max2way` | `"all"` | Controls the two-predictor search as in `prems()`. |
+| `standardize` | `TRUE` | Standardise predictors internally within each training fold. |
+| `nfolds` | `NULL` | Number of CV folds. If `foldid` is supplied, this is inferred when omitted. If both `nfolds` and `foldid` are omitted, leave-one-out CV is used. |
+| `foldid` | `NULL` | Optional vector assigning each observation to a CV fold. Supplying this is useful for reproducibility and for using identical folds across methods. |
+| `family` | `"binomial"` | Outcome family: `"gaussian"`, `"binomial"` or `"cox"`. |
+| `verbose` | `TRUE` | Print fold and model-search progress. |
+| `cv.fit` | `NULL` | Existing `cv.prems()` object to continue to a larger `k.max`. The object must contain retained fold fits. |
+| `return.fits` | `FALSE` | Retain the complete fold-specific PReMS fits needed for later continuation. |
+| `tau.nfolds` | `10` | Number of folds used for automatic `tau` estimation within each training fold. |
+| `tau.attempts` | `20` | Maximum number of attempts to obtain a valid automatic estimate of `tau` within each training fold. |
 
 `cv.prems()` returns the model size with the highest mean CV score (`best`), the one-standard-error alternative (`one.se`), the mean and standard error of the fold-level scores (`cvm` and `cvsd`), the fold-level score matrix (`pwll`), fold assignments and selected predictors. If `return.fits = TRUE`, the returned object also contains `fold.fits`, which allows the search to be continued without refitting smaller model sizes.
 
-**RAM usage:** `return.fits = TRUE` can make a `cv.prems` object large because the complete PReMS search is retained for every CV fold. The default is therefore `FALSE`. Use `TRUE` only when the CV search may need to be extended, then set `return.fits = FALSE` on the final continuation call if the saved fold fits are no longer required.
+**RAM usage:** `return.fits = TRUE` can make a `cv.prems` object large because the complete PReMS search is retained for every CV fold. Use `TRUE` only when the CV search may need to be extended, then set `return.fits = FALSE` on the final continuation call if the saved fold fits are no longer required.
 
 ### Helper functions
 
-These functions are used to extract models, make predictions, display CV results and apply the sequential model-size stopping rule.
-
-| Function | Purpose |
-| --- | --- |
-| `getModelFit()` | Extract a ranked fitted model of a specified size. |
-| `predict.prems()` | Generate predictions from a fitted PReMS model. |
-| `plot.cv.prems()` | Plot cross-validated performance against model size. |
-| `prems.cv.stop()` | Apply the paired blockwise stopping rule to fold-level CV scores. |
+These functions extract models, make predictions, display CV results and apply the sequential model-size stopping rule.
 
 #### `getModelFit()`
 
 ```r
-getModelFit(
-  fitted.models, size = 1, rank = 1, no.cores = 10,
-  criteria = "ML"
-)
+getModelFit(fitted.models, size = 1, rank = 1, no.cores = 10)
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `fitted.models` | Object returned by `prems()` or `ModelSearchIncrease()`. |
-| `size` | Model size to extract. |
-| `rank` | Rank of the model to extract within that size according to `criteria`; `1` returns the highest-ranking model. |
-| `no.cores` | Number of cores used when ranking the stored models. |
-| `criteria` | Model-ranking criterion, normally `"ML"`. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `fitted.models` | — | Object returned by `prems()` or `ModelSearchIncrease()`. |
+| `size` | `1` | Model size to extract. |
+| `rank` | `1` | Rank of the model to extract within that size according to `ML`; `1` returns the highest-ranking model. |
+| `no.cores` | `10` | Number of cores used when ranking the stored models. |
 
-The returned model includes its fitted coefficients in `beta` together with its model-fit criteria.
+The returned model includes its fitted coefficients in `beta` together with its stored model-fit statistics.
 
 #### `predict.prems()`
 
 ```r
 predict.prems(
   fitted.models, newx, newx.fixed = NULL, size = 1, rank = 1,
-  no.cores = 10, criteria = "ML"
+  no.cores = 10
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `fitted.models` | Fitted PReMS object. |
-| `newx` | Matrix of candidate predictors for the observations to be predicted. Predictor names must match those used for fitting. |
-| `newx.fixed` | Fixed covariates for the new observations if fixed covariates were used when fitting. |
-| `size` | Model size used for prediction. |
-| `rank` | Rank of the model used within the selected model size. |
-| `no.cores` | Number of cores used when ranking the stored models. |
-| `criteria` | Criterion used to rank models within the selected size. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `fitted.models` | — | Fitted PReMS object. |
+| `newx` | — | Matrix of candidate predictors for the observations to be predicted. Predictor names must match those used for fitting. |
+| `newx.fixed` | `NULL` | Fixed covariates for the new observations if fixed covariates were used when fitting. |
+| `size` | `1` | Model size used for prediction. |
+| `rank` | `1` | `ML` rank of the model used within the selected model size. |
+| `no.cores` | `10` | Number of cores used when ranking the stored models. |
 
 For binomial models the returned values are probabilities. For Gaussian models they are predicted outcome values and for Cox models they are linear predictors.
 
@@ -177,11 +159,11 @@ For binomial models the returned values are probabilities. For Gaussian models t
 plot.cv.prems(cv.fit, ylim = NULL, cex = 1)
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `cv.fit` | Object returned by `cv.prems()`. |
-| `ylim` | Optional y-axis limits. If `NULL`, limits are chosen from the CV means and standard errors. |
-| `cex` | Expansion factor used for axis and label text. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `cv.fit` | — | Object returned by `cv.prems()`. |
+| `ylim` | `NULL` | Optional y-axis limits. When `NULL`, limits are chosen from the CV means and standard errors. |
+| `cex` | `1` | Expansion factor used for axis and label text. |
 
 The plot shows mean cross-validated score with standard-error bars against model size and marks the `best` and `one.se` selections.
 
@@ -194,23 +176,18 @@ prems.cv.stop(
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `cv.fit` | `cv.prems()` object containing fold-level scores in `pwll`. |
-| `block.size` | Number of consecutive model sizes in each block. |
-| `se.multiplier` | Number of paired standard errors by which a new block must improve on the currently retained model for the search to continue. Default `1`. |
-| `require.complete.block` | If `TRUE`, an incomplete final block is not sufficient to declare the search adequate. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `cv.fit` | — | `cv.prems()` object containing fold-level scores in `pwll`. |
+| `block.size` | `10` | Number of consecutive model sizes in each block. |
+| `se.multiplier` | `1` | Number of paired standard errors by which a new block must improve on the currently retained model for the search to continue. |
+| `require.complete.block` | `TRUE` | Require a complete final block before the search can be declared adequate. |
 
 The returned object contains `selected.size`, `selected.mean`, `adequate`, `reason`, `comparisons` and `mean.score`. These outputs and the distinction between this sequential stopping rule and selecting the maximum CV score over a fixed range are described in [Model-size selection and sequential stopping](#model-size-selection-and-sequential-stopping).
 
 ### Auxiliary functions
 
 These functions support continuation and `tau` estimation but are not normally the primary entry points for an analysis.
-
-| Function | Purpose |
-| --- | --- |
-| `ModelSearchIncrease()` | Extend an existing PReMS model search to a larger maximum model size without repeating smaller-model searches. |
-| `TauEst()` | Estimate the ridge-prior precision directly. Normally called automatically by `prems()` when `tau = NULL`. |
 
 #### `ModelSearchIncrease()`
 
@@ -222,17 +199,17 @@ ModelSearchIncrease(
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `fitted.models` | Existing PReMS fit to extend. |
-| `y` | Original training outcome. |
-| `x` | Original matrix of candidate predictors. |
-| `x.fixed` | Original fixed-covariate matrix, if used. |
-| `k.max` | Target maximum model size. If `NULL`, one additional model size is fitted. |
-| `no.cores` | Number of cores used for the added model searches. |
-| `max.s` | Number of models retained at each newly fitted size. If `NULL`, the search breadth retained at the current largest size is preserved. |
-| `verbose` | If `TRUE`, print progress as each new model size is completed. |
-| `checkpoint` | Optional callback invoked after each newly completed model size. This is primarily used by the batch/HPC implementation for checkpointing. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `fitted.models` | — | Existing PReMS fit to extend. |
+| `y` | — | Original training outcome. |
+| `x` | — | Original matrix of candidate predictors. |
+| `x.fixed` | `NULL` | Original fixed-covariate matrix, if used. |
+| `k.max` | `NULL` | Target maximum model size. When `NULL`, one additional model size is fitted. |
+| `no.cores` | `10` | Number of cores used for the added model searches. |
+| `max.s` | `NULL` | Number of models retained at each newly fitted size. When `NULL`, the search breadth retained at the current largest size is preserved. |
+| `verbose` | `TRUE` | Print progress as each new model size is completed. |
+| `checkpoint` | `NULL` | Optional callback invoked after each newly completed model size, primarily for batch/HPC checkpointing. |
 
 The existing `tau`, scaling parameters and fitted smaller model sizes are inherited from `fitted.models`.
 
@@ -246,18 +223,18 @@ TauEst(
 )
 ```
 
-| Argument | Meaning |
-| --- | --- |
-| `y` | Outcome. |
-| `x` | Matrix of candidate predictors. |
-| `x.fixed` | Optional fixed covariates, assigned zero Lasso penalty. |
-| `family` | Outcome family supplied to `glmnet::cv.glmnet()`. |
-| `standardize` | Whether predictors are standardised by `glmnet` and when converting the selected coefficient magnitude to `tau`. |
-| `n.coef` | Number of the largest absolute Lasso coefficients used in the calculation of `tau`. Default `1`. |
-| `fit` | Optional existing `cv.glmnet` fit. If supplied, the Lasso CV step is not repeated. |
-| `nfolds` | Number of folds for `cv.glmnet()`. If omitted, the number of observations is used. |
-| `parallel` | If `TRUE`, allow `cv.glmnet()` to use a registered `foreach` backend. |
-| `no.cores` | Number of workers used when `TauEst()` creates its own temporary parallel backend. |
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `y` | — | Outcome. |
+| `x` | — | Matrix of candidate predictors. |
+| `x.fixed` | `NULL` | Optional fixed covariates, assigned zero Lasso penalty. |
+| `family` | `"binomial"` | Outcome family supplied to `glmnet::cv.glmnet()`. |
+| `standardize` | `TRUE` | Whether predictors are standardised by `glmnet` and when converting the selected coefficient magnitude to `tau`. |
+| `n.coef` | `1` | Number of the largest absolute Lasso coefficients used in the calculation of `tau`. |
+| `fit` | `NULL` | Optional existing `cv.glmnet` fit. When supplied, the Lasso CV step is not repeated. |
+| `nfolds` | `NULL` | Number of folds for `cv.glmnet()`. When `NULL`, the number of observations is used. |
+| `parallel` | `FALSE` | Allow `cv.glmnet()` to use a registered `foreach` backend. `prems()` sets this automatically according to `no.cores` when it calls `TauEst()`. |
+| `no.cores` | `1` | Number of workers used when `TauEst()` creates its own temporary parallel backend. |
 
 `TauEst()` returns `tau.opt`, `tau.1se` and the underlying Lasso CV fit in `fit.lasso`. Most users do not need to call it directly because `prems()` invokes it automatically when `tau = NULL`.
 
@@ -313,8 +290,7 @@ cv.fit <- cv.prems(
   foldid = foldid,
   max2way = "all",
   max.s = 50,
-  no.cores = 4,
-  criteria = "ML"
+  no.cores = 4
 )
 
 cv.fit$best
@@ -383,8 +359,7 @@ selected.size <- cv.fit$best
 selected.model <- getModelFit(
   fit,
   size = selected.size,
-  rank = 1,
-  criteria = "ML"
+  rank = 1
 )
 
 selected.model$beta
@@ -408,8 +383,7 @@ fit <- ModelSearchIncrease(
 size20.model <- getModelFit(
   fit,
   size = 20,
-  rank = 1,
-  criteria = "ML"
+  rank = 1
 )
 
 size20.model$beta
@@ -426,8 +400,7 @@ prems.pred <- predict.prems(
   fit,
   newx = x.test,
   size = selected.size,
-  rank = 1,
-  criteria = "ML"
+  rank = 1
 )
 
 lasso.pred.min <- as.numeric(
@@ -514,7 +487,6 @@ cv.fit <- cv.prems(
   max2way = "all",
   max.s = 50,
   no.cores = 4,
-  criteria = "ML",
   return.fits = TRUE
 )
 
@@ -614,8 +586,7 @@ cv.fit <- cv.prems(
   foldid = foldid,
   max2way = 20,
   max.s = 50,
-  no.cores = 4,
-  criteria = "ML"
+  no.cores = 4
 )
 
 cv.fit$best
@@ -669,8 +640,7 @@ selected.size <- cv.fit$best
 selected.model <- getModelFit(
   fit,
   size = selected.size,
-  rank = 1,
-  criteria = "ML"
+  rank = 1
 )
 
 selected.model$beta
@@ -689,7 +659,6 @@ prems.pred <- as.numeric(
     newx = x.test,
     size = selected.size,
     rank = 1,
-    criteria = "ML"
   )
 )
 
@@ -784,8 +753,7 @@ cv.fit <- cv.prems(
   foldid = foldid,
   max2way = "all",
   max.s = 50,
-  no.cores = 4,
-  criteria = "ML"
+  no.cores = 4
 )
 ```
 
@@ -810,8 +778,7 @@ selected.size <- cv.fit$best
 selected.model <- getModelFit(
   fit,
   size = selected.size,
-  rank = 1,
-  criteria = "ML"
+  rank = 1
 )
 
 selected.model$beta
