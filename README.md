@@ -12,14 +12,14 @@ For each model size, PReMS ranks candidate models by the marginal-likelihood and
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Function reference](#function-reference)
-  - [`prems()`](#prems)
-  - [`cv.prems()`](#cvprems)
-  - [`getModelFit()`](#getmodelfit)
-  - [`predict.prems()`](#predictprems)
-  - [`plot.cv.prems()`](#plotcvprems)
-  - [`prems.cv.stop()`](#premscvstop)
-  - [`ModelSearchIncrease()`](#modelsearchincrease)
-  - [`TauEst()`](#tauest)
+  - [`prems()`](#prems-function)
+  - [`cv.prems()`](#cvprems-function)
+  - [`getModelFit()`](#getmodelfit-function)
+  - [`predict.prems()`](#predictprems-function)
+  - [`plot.cv.prems()`](#plotcvprems-function)
+  - [`prems.cv.stop()`](#premscvstop-function)
+  - [`ModelSearchIncrease()`](#modelsearchincrease-function)
+  - [`TauEst()`](#tauest-function)
 - [Example: Binary UCI SPECTF Heart data](#example-binary-uci-spectf-heart-data)
 - [Model-size selection and sequential stopping](#model-size-selection-and-sequential-stopping)
 - [Parallel cross-validation on HPC](#parallel-cross-validation-on-hpc)
@@ -106,11 +106,25 @@ best.model$beta
 
 `best.model$beta` contains the fitted coefficients for the selected model. For a smaller model chosen by the one-standard-error rule, use `cv.fit$one.se` instead of `cv.fit$best`.
 
+To predict the outcome for new observations, supply a numeric matrix `x.new` with the same predictor columns as `x`:
+
+```r
+pred <- predict.prems(
+  fit,
+  newx = x.new,
+  size = cv.fit$best
+)
+```
+
+For a binomial model, `pred` contains predicted probabilities.
+
 ## Function reference
 
 ### Main functions
 
 The two principal user-facing functions are `prems()` and `cv.prems()`. PReMS ranks candidate models by the negative log marginal likelihood (`ML`), so smaller values indicate higher-ranked models.
+
+<a id="prems-function"></a>
 
 #### `prems()`
 
@@ -158,6 +172,8 @@ Both `family` and `k.max` must be supplied explicitly.
 | `family` | Fitted outcome family. |
 
 Within each retained model, `ML` is the negative approximate log marginal likelihood, so smaller values indicate better-ranked models. `beta` contains coefficients on the original predictor scale.
+
+<a id="cvprems-function"></a>
 
 #### `cv.prems()`
 
@@ -224,6 +240,8 @@ use the same search breadth.
 
 These functions extract models, make predictions, display CV results and apply the sequential model-size stopping rule.
 
+<a id="getmodelfit-function"></a>
+
 #### `getModelFit()`
 
 ```r
@@ -246,6 +264,8 @@ A fitted model with three components:
 | `aic` | AIC for the fitted model. |
 | `beta` | Named fitted coefficients on the original predictor scale. For Gaussian and binomial models this includes the intercept `I`; fixed covariates are included before the selected candidate predictors. |
 
+<a id="predictprems-function"></a>
+
 #### `predict.prems()`
 
 ```r
@@ -266,6 +286,8 @@ predict.prems(
 
 Predictions for the rows of `newx`. For binomial models these are probabilities, for Gaussian models they are predicted outcome values and for Cox models they are linear predictors.
 
+<a id="plotcvprems-function"></a>
+
 #### `plot.cv.prems()`
 
 ```r
@@ -281,6 +303,8 @@ plot.cv.prems(cv.fit, ylim = NULL, cex = 1)
 **Returns**
 
 Produces a plot in the current graphics device. The plot shows mean cross-validated score with standard-error bars against model size and marks the `best` and `one.se` selections.
+
+<a id="premscvstop-function"></a>
 
 #### `prems.cv.stop()`
 
@@ -315,6 +339,8 @@ The fields within `comparisons` and the distinction between this sequential stop
 
 These auxiliary functions support model-search continuation and separate estimation of `tau`.
 
+<a id="modelsearchincrease-function"></a>
+
 #### `ModelSearchIncrease()`
 
 ```r
@@ -342,6 +368,8 @@ The existing `tau`, scaling parameters and fitted smaller model sizes are inheri
 **Returns**
 
 An updated PReMS fit object in the same format as `prems()`, extended through the requested `k.max`. Previously fitted smaller model sizes are retained.
+
+<a id="tauest-function"></a>
 
 #### `TauEst()`
 
