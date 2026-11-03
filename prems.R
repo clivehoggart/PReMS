@@ -238,10 +238,69 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
 ############# Public functions below #############
 
 prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5,
-                  family='gaussian', tau=1, max.s=10, no.cores=10,
-                  standardize=TRUE, verbose=TRUE ){
+                  family='gaussian', tau=NULL, max.s=10, no.cores=10,
+                  standardize=TRUE, verbose=TRUE, tau.nfolds=10,
+                  tau.attempts=20 ){
     model.indicator <- list()
     fitted.models <- list()
+
+    if( length(no.cores)!=1L || !is.numeric(no.cores) || !is.finite(no.cores) ||
+        no.cores<1 || no.cores!=as.integer(no.cores) )
+        stop("no.cores must be a positive integer.")
+    no.cores <- as.integer(no.cores)
+
+    if( is.null(tau) ){
+        n <- NROW(y)
+        if( n < 3L )
+            stop("At least three observations are required to estimate tau automatically.")
+        if( length(tau.nfolds)!=1L || !is.numeric(tau.nfolds) ||
+            !is.finite(tau.nfolds) || tau.nfolds<3 ||
+            tau.nfolds!=as.integer(tau.nfolds) )
+            stop("tau.nfolds must be an integer >= 3.")
+        tau.nfolds <- min(as.integer(tau.nfolds), n)
+        if( length(tau.attempts)!=1L || !is.finite(tau.attempts) ||
+            tau.attempts<1 || tau.attempts!=as.integer(tau.attempts) )
+            stop("tau.attempts must be a positive integer.")
+
+        if( no.cores > 1L ){
+            if( !requireNamespace("foreach", quietly=TRUE) )
+                stop("Automatic parallel tau estimation with no.cores > 1 requires the 'foreach' package.")
+            if( !foreach::getDoParRegistered() &&
+                !requireNamespace("doParallel", quietly=TRUE) )
+                stop("Automatic parallel tau estimation with no.cores > 1 requires the 'doParallel' package when no foreach backend is already registered.")
+        }
+
+        tauest <- NULL
+        for( attempt in seq_len(as.integer(tau.attempts)) ){
+            tauest.try <- try(
+                TauEst(
+                    y=y, x=x, x.fixed=x.fixed, family=family,
+                    standardize=standardize, nfolds=tau.nfolds,
+                    parallel=(no.cores > 1), no.cores=no.cores
+                ),
+                silent=TRUE
+            )
+            ok <- !inherits(tauest.try, "try-error") &&
+                  !is.null(tauest.try$tau.opt) &&
+                  length(tauest.try$tau.opt)==1L &&
+                  is.numeric(tauest.try$tau.opt) &&
+                  is.finite(tauest.try$tau.opt) &&
+                  tauest.try$tau.opt>0
+            if( ok ){
+                tauest <- tauest.try
+                break
+            }
+        }
+        if( is.null(tauest) )
+            stop("Unable to estimate tau after ", tau.attempts,
+                 " attempts. Supply tau explicitly or inspect the glmnet fit.")
+        tau <- tauest$tau.opt
+        if( verbose )
+            message("Estimated tau = ", signif(tau, 6))
+    }else{
+        if( length(tau)!=1L || !is.numeric(tau) || !is.finite(tau) || tau<=0 )
+            stop("tau must be NULL or a positive finite number.")
+    }
 
     m1 <- apply( x, 2, mean )
     s1 <- apply( x, 2, sd )
@@ -485,10 +544,10 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, k.max=NULL,
     return(fitted.models)
 }
 
-getModelFit <- function( fitted.models, size=1, rank=1, no.cores=10, criteria='ML' ){
+getModelFit <- function( fitted.models, size=1, rank=1, no.cores=10 ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
 
-    ptr <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
+    ptr <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, 'ML', mc.cores=no.cores ) ))[rank]
 
     model.fit <- list()
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
@@ -525,9 +584,9 @@ thin.prems <- function( fit, size, rank ){
 }
 
 predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=1, rank=1,
-                          no.cores=10, criteria='ML' ){
+                          no.cores=10 ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
-    best.fit <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, criteria, mc.cores=no.cores ) ))[rank]
+    best.fit <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, 'ML', mc.cores=no.cores ) ))[rank]
     best.fit.model <- fitted.models$fitted.models[[size]][[best.fit]]$beta
     ptr <- fitted.models$model.indicator[[size]][best.fit,]
 
@@ -569,14 +628,13 @@ getICs <- function( fitted.models, k.min=1 ){
 
 cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
                       max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
-                      lasso.factor=1, criteria='ML', family='binomial', verbose=TRUE,
-                      cv.fit=NULL, return.fits=FALSE ){
+                      family='binomial', verbose=TRUE,
+                      cv.fit=NULL, return.fits=FALSE, tau.nfolds=10, tau.attempts=20 ){
     n <- NROW(y)
     continuing <- !is.null(cv.fit)
     k.min.missing <- missing(k.min)
     max.s.missing <- missing(max.s)
     family.missing <- missing(family)
-    criteria.missing <- missing(criteria)
     standardize.missing <- missing(standardize)
     return.fits.missing <- missing(return.fits)
     foldid.supplied <- !is.null(foldid)
@@ -635,13 +693,8 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         }else{
             family <- cv.fit$fold.fits[[1]]$family
         }
-        if( !is.null(cv.fit$criteria) ){
-            if( criteria.missing ){
-                criteria <- cv.fit$criteria
-            }else if( !identical(criteria, cv.fit$criteria) ){
-                stop("criteria differs from the existing cv.fit object.")
-            }
-        }
+        if( !is.null(cv.fit$criteria) && !identical(cv.fit$criteria, "ML") )
+            stop("This cv.fit object was created using a model-ranking criterion other than ML and cannot be continued with the current interface.")
         if( !is.null(cv.fit$standardize) && !standardize.missing &&
             !identical(standardize, cv.fit$standardize) )
             stop("standardize differs from the existing cv.fit object.")
@@ -771,44 +824,16 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                 verbose=verbose
             )
         }else{
-            if( is.null(tau.i) ){
-                tauest <- NULL
-                attempt <- 1
-                max.attempts <- 20
-                tau.nfolds <- min(10, NROW(y.train))
-
-                while( attempt <= max.attempts ){
-                    tauest.try <- try(
-                        TauEst(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
-                               family=family, nfolds=tau.nfolds, parallel=FALSE),
-                        silent=TRUE
-                    )
-                    ok <- !inherits(tauest.try, "try-error") &&
-                        !is.null(tauest.try$tau.opt) &&
-                        length(tauest.try$tau.opt) == 1 &&
-                        is.numeric(tauest.try$tau.opt) &&
-                        is.finite(tauest.try$tau.opt) &&
-                        tauest.try$tau.opt > 0
-                    if( ok ){
-                        tauest <- tauest.try
-                        break
-                    }
-                    attempt <- attempt + 1
-                }
-                if( is.null(tauest) ){
-                    stop("Unable to estimate tau in cross-validation fold ", i,
-                         ". Supply tau.i explicitly or inspect the glmnet fit.")
-                }
-                tau <- tauest$tau.opt * lasso.factor
-                if( verbose ) print(paste0("tau=",tau))
-            }else{
-                tau <- tau.i
-            }
-
-            my.fit <- prems(y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
-                            family=family, tau=tau, k.max=k.max, max.s=max.s,
-                            standardize=standardize, max2way=max2way,
-                            no.cores=no.cores, verbose=FALSE)
+            my.fit <- prems(
+                y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
+                family=family, tau=tau.i, k.max=k.max, max.s=max.s,
+                standardize=standardize, max2way=max2way,
+                no.cores=no.cores, verbose=FALSE,
+                tau.nfolds=min(tau.nfolds, NROW(y.train)),
+                tau.attempts=tau.attempts
+            )
+            if( is.null(tau.i) && verbose )
+                print(paste0("tau=", my.fit$tau))
         }
 
         if( continuing || return.fits )
@@ -819,8 +844,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             pred <- predict.prems(my.fit,
                                   newx=x[test,,drop=FALSE],
                                   newx.fixed=x.fixed.test,
-                                  size=k, criteria=criteria,
-                                  no.cores=no.cores)
+                                  size=k, no.cores=no.cores)
 
             if( family=='binomial' ){
                 lp1 <- log(pred)
@@ -835,7 +859,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             }
 
             coef.names <- names(getModelFit(my.fit, size=k, rank=1,
-                                            no.cores=no.cores, criteria=criteria)$beta)
+                                            no.cores=no.cores)$beta)
             selected <- setdiff(coef.names, c("I", my.fit$cnames.fixed))
             selected.coef[[k]][i,] <- selected
         }
@@ -861,7 +885,6 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         pwll=pwll,
         foldid=foldid,
         family=family,
-        criteria=criteria,
         standardize=if( continuing ) cv.fit$standardize else standardize,
         x.names=colnames(x),
         x.fixed.names=if( is.null(x.fixed) ) NULL else colnames(x.fixed),
@@ -1035,7 +1058,7 @@ apply_cv_prems_parallel_stopping_rule <- prems.cv.stop
 
 
 TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
-                    n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE ){
+                    n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE, no.cores=1 ){
     n <- NROW(y)
     if( is.null(nfolds) ){
         nfolds <- n
@@ -1044,12 +1067,37 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
         x.fixed <- matrix(nrow=n, ncol=0)
     }
     if( is.null(fit) ){
+        if( length(no.cores)!=1L || !is.numeric(no.cores) || !is.finite(no.cores) ||
+            no.cores<1 || no.cores!=as.integer(no.cores) )
+            stop("no.cores must be a positive integer.")
+        no.cores <- as.integer(no.cores)
+
+        use.parallel <- isTRUE(parallel) && no.cores > 1L
+        cluster <- NULL
+
+        if( use.parallel ){
+            if( !requireNamespace("foreach", quietly=TRUE) )
+                stop("Parallel tau estimation requires the 'foreach' package.")
+
+            if( !foreach::getDoParRegistered() ){
+                if( !requireNamespace("doParallel", quietly=TRUE) )
+                    stop("Parallel tau estimation requires the 'doParallel' package when no foreach backend is already registered.")
+
+                cluster <- parallel::makePSOCKcluster(no.cores)
+                doParallel::registerDoParallel(cluster)
+                on.exit({
+                    parallel::stopCluster(cluster)
+                    foreach::registerDoSEQ()
+                }, add=TRUE)
+            }
+        }
+
         lambda.factor <- c(rep(0,ncol(x.fixed)), rep(1,ncol(x)))
         fit <- glmnet::cv.glmnet(x=as.matrix(cbind(x.fixed,x)), y=y,
                       penalty.factor=lambda.factor,
                       family=family, alpha=1, nfolds=nfolds,
                       type.measure='deviance', grouped=FALSE, standardize=standardize,
-                      parallel=parallel)
+                      parallel=use.parallel)
     }
 
     ncol.fixed <- ncol(x.fixed)
@@ -1111,11 +1159,11 @@ TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
     return(ret)
 }
 
-my.auc <- function( my.fit, sizes, X, y, rank=1, criteria='ML' ){
+my.auc <- function( my.fit, sizes, X, y, rank=1 ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
-        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10, criteria=criteria )
+        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10 )
     }
 #    r <- matrix(ncol=3,nrow=length(sizes))
     r <- list()

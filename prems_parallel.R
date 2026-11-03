@@ -98,39 +98,13 @@ order_for_existing_fit <- function(fit, x, x.fixed) {
     list(x=x, x.fixed=x.fixed)
 }
 
-estimate_parallel_tau <- function(y, x, x.fixed, family, nfolds=10,
-                                  attempts=20, lasso.factor=1, seed=1,
-                                  verbose=TRUE) {
-    nfolds <- min(nfolds, NROW(y))
-    if( nfolds<2 ) stop("At least two observations are required to estimate tau.")
-
-    for( a in seq_len(attempts) ){
-        set.seed(seed+a-1L)
-        ans <- try(
-            TauEst(y=y, x=x, x.fixed=x.fixed, family=family,
-                   nfolds=nfolds, parallel=FALSE),
-            silent=TRUE
-        )
-        ok <- !inherits(ans, "try-error") && !is.null(ans$tau.opt) &&
-              length(ans$tau.opt)==1L && is.numeric(ans$tau.opt) &&
-              is.finite(ans$tau.opt) && ans$tau.opt>0
-        if( ok ){
-            tau <- ans$tau.opt*lasso.factor
-            if( verbose ) message("tau = ", signif(tau,6))
-            return(tau)
-        }
-    }
-    stop("Unable to estimate tau after ", attempts,
-         " attempts. Supply tau explicitly or inspect the glmnet fits.")
-}
-
 # Fit either one CV training fold or the complete data. Existing out.file
 # objects are continued rather than refitted from model size 1.
 prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
                                initial.k=target.k, max.s=NULL,
                                max2way="all", no.cores=1, tau=NULL,
                                tau.folds=10, tau.attempts=20,
-                               lasso.factor=1, standardize=TRUE,
+                               standardize=TRUE,
                                seed=1, verbose=TRUE) {
     .ensure_prems()
     if( missing(out.file) || !nzchar(out.file) ) stop("out.file is required for checkpointing.")
@@ -169,22 +143,15 @@ prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
         if( verbose ) message("Loaded ", out.file, " through model size ", current.k, ".")
     }else{
         max.s.initial <- max.s %||% 50L
-        tau.use <- tau
-        if( is.null(tau.use) ){
-            tau.use <- estimate_parallel_tau(
-                y=y, x=x, x.fixed=x.fixed, family=dat$family,
-                nfolds=tau.folds, attempts=tau.attempts,
-                lasso.factor=lasso.factor, seed=seed, verbose=verbose
-            )
-        }
         if( verbose ) message("Starting PReMS on ", label,
                               " through model size ", initial.k, ".")
         set.seed(seed)
         fit <- prems(
             y=y, x=x, x.fixed=x.fixed, family=dat$family,
-            tau=tau.use, k.max=initial.k, max.s=max.s.initial,
+            tau=tau, k.max=initial.k, max.s=max.s.initial,
             max2way=max2way, no.cores=no.cores,
-            standardize=standardize, verbose=verbose
+            standardize=standardize, verbose=verbose,
+            tau.nfolds=tau.folds, tau.attempts=tau.attempts
         )
         dir.create(dirname(out.file), recursive=TRUE, showWarnings=FALSE)
         saveRDS(fit, out.file)
@@ -224,9 +191,8 @@ resolve_fit_file <- function(template, fold) {
 # prems.cv.stop().
 prems_parallel_summarise <- function(data, fit.template, out.file=NULL,
                                      k.min=1, k.max=NULL,
-                                     criteria="ML", verbose=TRUE) {
+                                     verbose=TRUE) {
     .ensure_prems()
-    criteria <- match.arg(criteria, c("ML", "aic"))
     dat <- validate_parallel_data(data, need.foldid=TRUE)
     folds <- sort(unique(dat$foldid))
     fit.files <- vapply(folds, function(f) resolve_fit_file(fit.template,f), character(1))
@@ -263,7 +229,7 @@ prems_parallel_summarise <- function(data, fit.template, out.file=NULL,
             k <- sizes[[jj]]
             pred <- as.numeric(predict.prems(
                 fit, newx=x.test, newx.fixed=x.fixed.test,
-                size=k, criteria=criteria
+                size=k
             ))
 
             if( dat$family=="binomial" ){
@@ -275,7 +241,7 @@ prems_parallel_summarise <- function(data, fit.template, out.file=NULL,
                 pwll[ii,jj] <- cox_pl_left_trunc(y.test,pred)
             }
 
-            coef.names <- names(getModelFit(fit,size=k,rank=1,criteria=criteria)$beta)
+            coef.names <- names(getModelFit(fit,size=k,rank=1)$beta)
             selected <- setdiff(coef.names,c("I",fit$cnames.fixed))
             if( length(selected)!=k )
                 stop("Expected ", k, " selected predictors in fold ", fold,
@@ -295,7 +261,7 @@ prems_parallel_summarise <- function(data, fit.template, out.file=NULL,
         best=selected.sizes[[1]], one.se=selected.sizes[[2]],
         cvm=cvm, cvsd=cvsd, selected.coef=selected.coef,
         pwll=pwll, foldid=dat$foldid, fit.files=fit.files,
-        family=dat$family, criteria=criteria
+        family=dat$family
     )
     class(ret) <- c("cv.prems.parallel","list")
 
@@ -347,10 +313,10 @@ usage <- function(status=0L) {
 "fit: --data FILE --out FILE --target-k INTEGER [--fold INTEGER]\n",
 "     [--initial-k INTEGER] [--max-s INTEGER] [--max2way all|INTEGER]\n",
 "     [--cores INTEGER] [--tau NUMERIC] [--tau-folds INTEGER]\n",
-"     [--tau-attempts INTEGER] [--lasso-factor NUMERIC]\n",
+"     [--tau-attempts INTEGER]\n",
 "     [--standardize TRUE|FALSE] [--seed INTEGER]\n\n",
 "summarise: --data FILE --fit-template STRING --out FILE\n",
-"           [--k-min INTEGER] [--k-max INTEGER] [--criteria ML|aic]\n",
+"           [--k-min INTEGER] [--k-max INTEGER]\n",
 sep="")
     quit(save="no",status=status)
 }
@@ -375,7 +341,6 @@ if( sys.nframe()==0L ){
             no.cores=as_int(opt$cores,1L), tau=as_num(opt$tau,NULL),
             tau.folds=as_int(opt[["tau-folds"]],10L),
             tau.attempts=as_int(opt[["tau-attempts"]],20L),
-            lasso.factor=as_num(opt[["lasso-factor"]],1),
             standardize=as_bool(opt$standardize,TRUE),
             seed=as_int(opt$seed,1L), verbose=as_bool(opt$verbose,TRUE)
         )
@@ -386,7 +351,6 @@ if( sys.nframe()==0L ){
             out.file=opt$out %||% stop("--out is required."),
             k.min=as_int(opt[["k-min"]],1L),
             k.max=as_int(opt[["k-max"]],NULL),
-            criteria=opt$criteria %||% "ML",
             verbose=as_bool(opt$verbose,TRUE)
         )
     }else{
