@@ -408,11 +408,7 @@ TauEst(
 
 The SPECTF Heart data set contains 267 individuals measured for 44 continuous SPECT-derived predictors. UCI supplies predefined training (`SPECTF.train`, 80 individuals) and test (`SPECTF.test`, 187 individuals) sets. The outcome is binary, with `0` and `1` denoting the two diagnostic classes.
 
-Download and extract the SPECTF Heart data from the UCI Machine Learning Repository:
-
-https://archive.ics.uci.edu/dataset/96/spectf+heart
-
-Place `SPECTF.train` and `SPECTF.test` in the working directory.
+The repository includes the predefined training and test files in the `data/` directory, so the example can be run directly after cloning the repository.
 
 ### 1. Read the data
 
@@ -424,8 +420,8 @@ feature.names <- as.vector(rbind(
   paste0("F", 1:22, "S")
 ))
 
-train <- read.csv("SPECTF.train", header = FALSE)
-test  <- read.csv("SPECTF.test",  header = FALSE)
+train <- read.csv("data/SPECTF.train", header = FALSE)
+test  <- read.csv("data/SPECTF.test",  header = FALSE)
 
 colnames(train) <- c("diagnosis", feature.names)
 colnames(test)  <- c("diagnosis", feature.names)
