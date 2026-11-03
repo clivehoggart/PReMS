@@ -14,11 +14,11 @@ For each model size, PReMS ranks candidate models by the marginal-likelihood and
   - [Main functions](#main-functions)
   - [Helper functions](#helper-functions)
   - [Auxiliary functions](#auxiliary-functions)
-- [Example: Binary UCI SPECTF Heart data](#example-binary-uci-spectf-heart-data)
+- [Example: UCI SPECTF Heart data](#example-uci-spectf-heart-data)
 - [Model-size selection and sequential stopping](#model-size-selection-and-sequential-stopping)
 - [Parallel cross-validation on HPC](#parallel-cross-validation-on-hpc)
-- [Example: Continuous tecator meat spectroscopy data](#example-continuous-tecator-meat-spectroscopy-data)
-- [Example: Survival NKI70 breast-cancer data](#example-survival-nki70-breast-cancer-data)
+- [Example: Tecator meat spectroscopy data](#example-tecator-meat-spectroscopy-data)
+- [Example: NKI70 breast-cancer survival data](#example-nki70-breast-cancer-survival-data)
 - [Fixed covariates](#fixed-covariates)
 - [Practical notes](#practical-notes)
 - [Citation](#citation)
@@ -51,7 +51,7 @@ install.packages("survival")
 source("prems.R")
 ```
 
-Multiple cores can be used on macOS and Linux, on Windows use `no.cores = 1`. Parallel cross-validation across HPC jobs is documented in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
+Multiple cores can be used on macOS and Linux, on Windows use `no.cores = 1`. Parallel cross-validation across HPC jobs is documented separately in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -331,7 +331,7 @@ TauEst(
 | `tau.1se` | Corresponding estimate based on the Lasso `lambda.1se` model; `NA` if that model contains no penalised predictors. |
 | `fit.lasso` | Cross-validated `glmnet` fit used to estimate `tau`. |
 
-## Example: Binary UCI SPECTF Heart data
+## Example: UCI SPECTF Heart data
 
 The SPECTF Heart data set contains 267 individuals measured for 44 continuous SPECT-derived predictors. UCI supplies predefined training (`SPECTF.train`, 80 individuals) and test (`SPECTF.test`, 187 individuals) sets. The outcome is binary, with `0` and `1` denoting the two diagnostic classes.
 
@@ -625,7 +625,7 @@ The SPECTF predictive log-likelihood is fairly flat around its optimum. For smal
 
 For large analyses, cross-validation folds can be fitted independently and model searches checkpointed and continued on an HPC system. See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for the batch/HPC workflow.
 
-## Example: Continuous tecator meat spectroscopy data
+## Example: Tecator meat spectroscopy data
 
 The Tecator data provide a compact continuous-outcome example with a predictor structure closer to high-dimensional molecular data. The data contain 215 meat samples, each measured for absorbance at 100 wavelengths between 850 and 1050 nm. Fat, water and protein percentages were measured by analytic chemistry. Here the 100 raw absorbance measurements are candidate predictors and fat percentage is the continuous outcome.
 
@@ -795,7 +795,7 @@ comparison
 
 Because the historical test set is not used for either model search or tuning, it provides a direct held-out comparison of PReMS and Lasso. The purpose of this example is to demonstrate continuous-outcome analysis and sparse selection in the presence of correlated predictors, rather than to treat individual wavelengths as independent biological signals.
 
-## Example: Survival NKI70 breast-cancer data
+## Example: NKI70 breast-cancer survival data
 
 The `nki70` data supplied with the `penalized` package provide a compact survival example with an omics-like predictor structure. The data contain 144 lymph-node-positive breast-cancer patients, metastasis-free follow-up time, an event indicator, five clinical risk factors and expression measurements for 70 genes. The 70-gene signature was identified in an earlier study, so this example is useful for demonstrating the software workflow but should not be interpreted as an independent biomarker-discovery benchmark.
 
