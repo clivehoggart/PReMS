@@ -10,15 +10,21 @@ For each model size, PReMS ranks candidate models by the marginal-likelihood and
 
 - [Current scope](#current-scope)
 - [Installation](#installation)
+- [Quick start](#quick-start)
 - [Function reference](#function-reference)
-  - [Main functions](#main-functions)
-  - [Helper functions](#helper-functions)
-  - [Auxiliary functions](#auxiliary-functions)
-- [Example: UCI SPECTF Heart data](#example-uci-spectf-heart-data)
+  - [`prems()`](#prems)
+  - [`cv.prems()`](#cvprems)
+  - [`getModelFit()`](#getmodelfit)
+  - [`predict.prems()`](#predictprems)
+  - [`plot.cv.prems()`](#plotcvprems)
+  - [`prems.cv.stop()`](#premscvstop)
+  - [`ModelSearchIncrease()`](#modelsearchincrease)
+  - [`TauEst()`](#tauest)
+- [Example: Binary UCI SPECTF Heart data](#example-binary-uci-spectf-heart-data)
 - [Model-size selection and sequential stopping](#model-size-selection-and-sequential-stopping)
 - [Parallel cross-validation on HPC](#parallel-cross-validation-on-hpc)
-- [Example: Tecator meat spectroscopy data](#example-tecator-meat-spectroscopy-data)
-- [Example: NKI70 breast-cancer survival data](#example-nki70-breast-cancer-survival-data)
+- [Example: Continuous tecator meat spectroscopy data](#example-continuous-tecator-meat-spectroscopy-data)
+- [Example: Survival NKI70 breast-cancer data](#example-survival-nki70-breast-cancer-data)
 - [Fixed covariates](#fixed-covariates)
 - [Practical notes](#practical-notes)
 - [Citation](#citation)
@@ -51,7 +57,7 @@ install.packages("survival")
 source("prems.R")
 ```
 
-Multiple cores can be used on macOS and Linux, on Windows use `no.cores = 1`. Parallel cross-validation across HPC jobs is documented separately in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
+Multiple cores can be used on macOS and Linux, on Windows use `no.cores = 1`. Parallel cross-validation across HPC jobs is documented in **[Parallel CV and model-size continuation](PARALLEL_CV.md)**.
 
 The SPECTF example uses `pROC` to calculate AUC:
 
@@ -60,6 +66,45 @@ install.packages("pROC")
 ```
 
 The Tecator and NKI70 data are downloaded directly in the examples below.
+
+## Quick start
+
+For a binary outcome `y` coded `0/1` and a numeric predictor matrix `x`, fit PReMS using the default settings and search models up to size 10:
+
+```r
+fit <- prems(
+  y = y,
+  x = x,
+  family = "binomial",
+  k.max = 10
+)
+```
+
+Select model size by 10-fold cross-validation over the same range:
+
+```r
+cv.fit <- cv.prems(
+  y = y,
+  x = x,
+  family = "binomial",
+  k.max = 10
+)
+
+cv.fit$best
+```
+
+`cv.fit$best` is the model size with the highest mean cross-validated predictive score. To inspect the highest-ranking PReMS model of that size from the full-data fit:
+
+```r
+best.model <- getModelFit(
+  fit,
+  size = cv.fit$best
+)
+
+best.model$beta
+```
+
+`best.model$beta` contains the fitted coefficients for the selected model. For a smaller model chosen by the one-standard-error rule, use `cv.fit$one.se` instead of `cv.fit$best`.
 
 ## Function reference
 
@@ -331,7 +376,7 @@ TauEst(
 | `tau.1se` | Corresponding estimate based on the Lasso `lambda.1se` model; `NA` if that model contains no penalised predictors. |
 | `fit.lasso` | Cross-validated `glmnet` fit used to estimate `tau`. |
 
-## Example: UCI SPECTF Heart data
+## Example: Binary UCI SPECTF Heart data
 
 The SPECTF Heart data set contains 267 individuals measured for 44 continuous SPECT-derived predictors. UCI supplies predefined training (`SPECTF.train`, 80 individuals) and test (`SPECTF.test`, 187 individuals) sets. The outcome is binary, with `0` and `1` denoting the two diagnostic classes.
 
@@ -625,7 +670,7 @@ The SPECTF predictive log-likelihood is fairly flat around its optimum. For smal
 
 For large analyses, cross-validation folds can be fitted independently and model searches checkpointed and continued on an HPC system. See **[Parallel CV and model-size continuation](PARALLEL_CV.md)** for the batch/HPC workflow.
 
-## Example: Tecator meat spectroscopy data
+## Example: Continuous tecator meat spectroscopy data
 
 The Tecator data provide a compact continuous-outcome example with a predictor structure closer to high-dimensional molecular data. The data contain 215 meat samples, each measured for absorbance at 100 wavelengths between 850 and 1050 nm. Fat, water and protein percentages were measured by analytic chemistry. Here the 100 raw absorbance measurements are candidate predictors and fat percentage is the continuous outcome.
 
@@ -795,7 +840,7 @@ comparison
 
 Because the historical test set is not used for either model search or tuning, it provides a direct held-out comparison of PReMS and Lasso. The purpose of this example is to demonstrate continuous-outcome analysis and sparse selection in the presence of correlated predictors, rather than to treat individual wavelengths as independent biological signals.
 
-## Example: NKI70 breast-cancer survival data
+## Example: Survival NKI70 breast-cancer data
 
 The `nki70` data supplied with the `penalized` package provide a compact survival example with an omics-like predictor structure. The data contain 144 lymph-node-positive breast-cancer patients, metastasis-free follow-up time, an event indicator, five clinical risk factors and expression measurements for 70 genes. The 70-gene signature was identified in an earlier study, so this example is useful for demonstrating the software workflow but should not be interpreted as an independent biomarker-discovery benchmark.
 
