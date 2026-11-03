@@ -237,10 +237,9 @@ getMargLikelihood2 <- function( x.select=NULL, x.fixed=NULL, y, tau=1, family='g
 
 ############# Public functions below #############
 
-prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5,
-                  family='gaussian', tau=NULL, max.s=10, no.cores=10,
-                  standardize=TRUE, verbose=TRUE, tau.nfolds=10,
-                  tau.attempts=20 ){
+prems <- function( y, x, family, k.max, x.fixed=NULL, max2way="all",
+                  tau=NULL, max.s=100, no.cores=4, standardize=TRUE,
+                  verbose=TRUE, tau.nfolds=10, tau.attempts=20 ){
     model.indicator <- list()
     fitted.models <- list()
 
@@ -443,7 +442,7 @@ prems <- function( y, x, x.fixed=NULL, max2way="all", k.max=5,
 }
 
 ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, k.max=NULL,
-                                 no.cores=10, max.s=NULL, verbose=TRUE,
+                                 no.cores=4, max.s=NULL, verbose=TRUE,
                                  checkpoint=NULL ){
     current.k <- length(fitted.models$fitted.models)
     if( is.null(k.max) )
@@ -544,10 +543,11 @@ ModelSearchIncrease <- function( fitted.models, y, x, x.fixed=NULL, k.max=NULL,
     return(fitted.models)
 }
 
-getModelFit <- function( fitted.models, size=1, rank=1, no.cores=10 ){
+getModelFit <- function( fitted.models, size=1, rank=1 ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
 
-    ptr <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, 'ML', mc.cores=no.cores ) ))[rank]
+    ML <- vapply(fitted.models$fitted.models[[size]], function(z) z$ML, numeric(1))
+    ptr <- order(ML)[rank]
 
     model.fit <- list()
     ptr1 <- fitted.models$model.indicator[[size]][ptr,,drop=FALSE]
@@ -583,10 +583,10 @@ thin.prems <- function( fit, size, rank ){
     return(ret)
 }
 
-predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=1, rank=1,
-                          no.cores=10 ){
+predict.prems <- function( fitted.models, newx, newx.fixed=NULL, size=1, rank=1 ){
     ptr.covs.use <- which( fitted.models$sd!=0 )
-    best.fit <- order( unlist(parallel::mclapply( fitted.models$fitted.models[[size]], getElement, 'ML', mc.cores=no.cores ) ))[rank]
+    ML <- vapply(fitted.models$fitted.models[[size]], function(z) z$ML, numeric(1))
+    best.fit <- order(ML)[rank]
     best.fit.model <- fitted.models$fitted.models[[size]][[best.fit]]$beta
     ptr <- fitted.models$model.indicator[[size]][best.fit,]
 
@@ -626,10 +626,10 @@ getICs <- function( fitted.models, k.min=1 ){
     return(res)
 }
 
-cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NULL,
-                      max.s=50, max2way='all', standardize=TRUE, nfolds=NULL, foldid=NULL,
-                      family='binomial', verbose=TRUE,
-                      cv.fit=NULL, return.fits=FALSE, tau.nfolds=10, tau.attempts=20 ){
+cv.prems <- function( y, x, family, k.max, x.fixed=NULL, no.cores=4, k.min=1,
+                      tau=NULL, max.s=100, max2way='all', standardize=TRUE,
+                      nfolds=10, foldid=NULL, verbose=TRUE, cv.fit=NULL,
+                      return.fits=FALSE, tau.nfolds=10, tau.attempts=20 ){
     n <- NROW(y)
     continuing <- !is.null(cv.fit)
     k.min.missing <- missing(k.min)
@@ -638,7 +638,11 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
     standardize.missing <- missing(standardize)
     return.fits.missing <- missing(return.fits)
     foldid.supplied <- !is.null(foldid)
-    nfolds.supplied <- !is.null(nfolds)
+    nfolds.missing <- missing(nfolds)
+    nfolds.supplied <- !nfolds.missing
+
+    if( !continuing && family.missing )
+        stop("family must be supplied for a new cv.prems() analysis.")
 
     subset_y <- function(y, idx) {
         if( family == "cox" ){
@@ -757,11 +761,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             print(paste("Continuing", nfolds, "fold cross-validation from model size",
                         current.k, "to", k.max))
     }else{
-        if( is.null(foldid) & is.null(nfolds) ){
-            nfolds <- n
-            foldid <- seq_len(nfolds)
-        }
-        if( !is.null(foldid) & is.null(nfolds) )
+        if( !is.null(foldid) && nfolds.missing )
             nfolds <- length(unique(foldid))
         if( is.null(foldid) ){
             yy <- y
@@ -826,13 +826,13 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
         }else{
             my.fit <- prems(
                 y=y.train, x=x[train,,drop=FALSE], x.fixed=x.fixed.train,
-                family=family, tau=tau.i, k.max=k.max, max.s=max.s,
+                family=family, tau=tau, k.max=k.max, max.s=max.s,
                 standardize=standardize, max2way=max2way,
                 no.cores=no.cores, verbose=FALSE,
                 tau.nfolds=min(tau.nfolds, NROW(y.train)),
                 tau.attempts=tau.attempts
             )
-            if( is.null(tau.i) && verbose )
+            if( is.null(tau) && verbose )
                 print(paste0("tau=", my.fit$tau))
         }
 
@@ -844,7 +844,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
             pred <- predict.prems(my.fit,
                                   newx=x[test,,drop=FALSE],
                                   newx.fixed=x.fixed.test,
-                                  size=k, no.cores=no.cores)
+                                  size=k)
 
             if( family=='binomial' ){
                 lp1 <- log(pred)
@@ -858,8 +858,7 @@ cv.prems <- function( y, x, x.fixed=NULL, no.cores=10, k.min=1, k.max, tau.i=NUL
                 pwll[i,kk] <- cox_pl_left_trunc(y.test, pred)
             }
 
-            coef.names <- names(getModelFit(my.fit, size=k, rank=1,
-                                            no.cores=no.cores)$beta)
+            coef.names <- names(getModelFit(my.fit, size=k, rank=1)$beta)
             selected <- setdiff(coef.names, c("I", my.fit$cnames.fixed))
             selected.coef[[k]][i,] <- selected
         }
@@ -1057,8 +1056,8 @@ apply_cv_prems_parallel_stopping_rule <- prems.cv.stop
 
 
 
-TauEst <- function( y, x, x.fixed=NULL, family='binomial', standardize=TRUE,
-                    n.coef=1, fit=NULL, nfolds=NULL, parallel=FALSE, no.cores=1 ){
+TauEst <- function( y, x, family, x.fixed=NULL, standardize=TRUE,
+                    n.coef=1, fit=NULL, nfolds=10, parallel=FALSE, no.cores=4 ){
     n <- NROW(y)
     if( is.null(nfolds) ){
         nfolds <- n
@@ -1163,7 +1162,7 @@ my.auc <- function( my.fit, sizes, X, y, rank=1 ){
     my.pred <- matrix(ncol=length(sizes),nrow=length(y))
     for( i in sizes ){
         ii <- i - min(sizes) + 1
-        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank, no.cores=10 )
+        my.pred[,ii] <- predict.prems( my.fit, as.matrix(X), size=i, rank=rank )
     }
 #    r <- matrix(ncol=3,nrow=length(sizes))
     r <- list()

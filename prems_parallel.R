@@ -101,11 +101,12 @@ order_for_existing_fit <- function(fit, x, x.fixed) {
 # Fit either one CV training fold or the complete data. Existing out.file
 # objects are continued rather than refitted from model size 1.
 prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
-                               initial.k=target.k, max.s=NULL,
-                               max2way="all", no.cores=1, tau=NULL,
-                               tau.folds=10, tau.attempts=20,
+                               initial.k=target.k, max.s=100,
+                               max2way="all", no.cores=4, tau=NULL,
+                               tau.nfolds=10, tau.attempts=20,
                                standardize=TRUE,
                                seed=1, verbose=TRUE) {
+    max.s.missing <- missing(max.s) || is.null(max.s)
     .ensure_prems()
     if( missing(out.file) || !nzchar(out.file) ) stop("out.file is required for checkpointing.")
     if( length(target.k)!=1L || !is.finite(target.k) || target.k<2 )
@@ -142,7 +143,7 @@ prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
         current.k <- length(fit$fitted.models)
         if( verbose ) message("Loaded ", out.file, " through model size ", current.k, ".")
     }else{
-        max.s.initial <- max.s %||% 50L
+        max.s.initial <- if( max.s.missing ) 100L else max.s
         if( verbose ) message("Starting PReMS on ", label,
                               " through model size ", initial.k, ".")
         set.seed(seed)
@@ -151,7 +152,7 @@ prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
             tau=tau, k.max=initial.k, max.s=max.s.initial,
             max2way=max2way, no.cores=no.cores,
             standardize=standardize, verbose=verbose,
-            tau.nfolds=tau.folds, tau.attempts=tau.attempts
+            tau.nfolds=tau.nfolds, tau.attempts=tau.attempts
         )
         dir.create(dirname(out.file), recursive=TRUE, showWarnings=FALSE)
         saveRDS(fit, out.file)
@@ -172,7 +173,8 @@ prems_parallel_fit <- function(data, out.file, target.k, fold=NULL,
         }
         fit <- ModelSearchIncrease(
             fitted.models=fit, y=y, x=x, x.fixed=x.fixed,
-            k.max=target.k, no.cores=no.cores, max.s=max.s,
+            k.max=target.k, no.cores=no.cores,
+            max.s=if( max.s.missing ) NULL else max.s,
             verbose=FALSE, checkpoint=checkpoint
         )
         current.k <- length(fit$fitted.models)
@@ -312,7 +314,7 @@ usage <- function(status=0L) {
 "  Rscript prems_parallel.R summarise [options]\n\n",
 "fit: --data FILE --out FILE --target-k INTEGER [--fold INTEGER]\n",
 "     [--initial-k INTEGER] [--max-s INTEGER] [--max2way all|INTEGER]\n",
-"     [--cores INTEGER] [--tau NUMERIC] [--tau-folds INTEGER]\n",
+"     [--cores INTEGER] [--tau NUMERIC] [--tau-nfolds INTEGER]\n",
 "     [--tau-attempts INTEGER]\n",
 "     [--standardize TRUE|FALSE] [--seed INTEGER]\n\n",
 "summarise: --data FILE --fit-template STRING --out FILE\n",
@@ -338,8 +340,8 @@ if( sys.nframe()==0L ){
             fold=as_int(opt$fold,NULL),
             initial.k=as_int(opt[["initial-k"]],target.k),
             max.s=as_int(opt[["max-s"]],NULL), max2way=max2way,
-            no.cores=as_int(opt$cores,1L), tau=as_num(opt$tau,NULL),
-            tau.folds=as_int(opt[["tau-folds"]],10L),
+            no.cores=as_int(opt$cores,4L), tau=as_num(opt$tau,NULL),
+            tau.nfolds=as_int(opt[["tau-nfolds"]],10L),
             tau.attempts=as_int(opt[["tau-attempts"]],20L),
             standardize=as_bool(opt$standardize,TRUE),
             seed=as_int(opt$seed,1L), verbose=as_bool(opt$verbose,TRUE)
